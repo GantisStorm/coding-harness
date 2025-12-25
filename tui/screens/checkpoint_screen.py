@@ -515,7 +515,11 @@ class CheckpointReviewScreen(Screen):
 
         yield Static("\nISSUES", classes="section-title")
         for issue in ctx.get("issues_to_close", [])[:10]:
-            yield Static(f"  #{issue.get('iid', 'N/A')}: {issue.get('title', 'N/A')}")
+            # Handle both dict format (with iid/title) and string format (e.g., "#88")
+            if isinstance(issue, dict):
+                yield Static(f"  #{issue.get('iid', 'N/A')}: {issue.get('title', 'N/A')}")
+            else:
+                yield Static(f"  {issue}")
 
         yield Static("\nDESCRIPTION PREVIEW", classes="section-title")
         desc = ctx.get("mr_description", "")[:_MAX_DESCRIPTION_PREVIEW_LENGTH]
