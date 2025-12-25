@@ -528,6 +528,18 @@ async def _run_agent_loop(
         # Re-determine session type (in case it changed)
         session_type = determine_session_type(config.project_dir, config.spec_slug, config.spec_hash)
 
+        # Check if milestone is already completed (MR created and milestone closed)
+        state = _load_milestone_state(config.project_dir, config.spec_slug, config.spec_hash)
+        if state and state.get("milestone_closed", False):
+            print("\n" + _SEPARATOR_HEAVY)
+            print("  MILESTONE COMPLETED")
+            print(_SEPARATOR_HEAVY)
+            print("\nMilestone is already closed.")
+            if state.get("merge_request_url"):
+                print(f"Merge Request: {state.get('merge_request_url')}")
+            print("\nNo further action needed. Exiting agent loop.")
+            break
+
         # Invoke phase callback if provided
         if callbacks.on_phase:
             callbacks.on_phase(session_type, iteration)
