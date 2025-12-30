@@ -18,6 +18,7 @@ from ..events import AgentConfigured
 
 # Priority branch names for sorting (common default branches first)
 _PRIORITY_BRANCHES = ["main", "master", "develop", "development"]
+_GIT_COMMAND_TIMEOUT = 5  # seconds
 
 
 class BranchSelectScreen(Screen):
@@ -75,6 +76,11 @@ class BranchSelectScreen(Screen):
         margin: 0 1;
     }
     """
+
+    BINDINGS = [
+        ("enter", "select", "Select"),
+        ("escape", "cancel", "Cancel"),
+    ]
 
     def __init__(
         self,
@@ -138,7 +144,7 @@ class BranchSelectScreen(Screen):
                 cwd=self.repo_dir,
                 capture_output=True,
                 text=True,
-                timeout=5,
+                timeout=_GIT_COMMAND_TIMEOUT,
                 check=False,  # We check returncode manually
             )
             if result.returncode == 0:
@@ -200,6 +206,15 @@ class BranchSelectScreen(Screen):
         elif button_id == "branch-cancel":
             self.dismiss()
 
+    def action_select(self) -> None:
+        """Quick action to select the current branch (Enter key)."""
+        select_button = self.query_one("#branch-select", Button)
+        select_button.press()
+
+    def action_cancel(self) -> None:
+        """Quick action to cancel selection (Escape key)."""
+        self.dismiss()
+
 
 # ============================================================================
 # Private Helper Functions
@@ -223,7 +238,7 @@ def _get_branches(repo_path: Path) -> list[str]:
             cwd=repo_path,
             capture_output=True,
             text=True,
-            timeout=5,
+            timeout=_GIT_COMMAND_TIMEOUT,
             check=False,  # We check returncode manually
         )
         if result.returncode != 0:

@@ -1,6 +1,6 @@
 # Coding Harness
 
-> Human-in-the-Loop AI Coding Agent with GitLab Milestone Integration
+> Human-in-the-Loop AI Coding Agent with GitLab Integration (or File-Only Mode)
 
 [![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
 [![Code style: ruff](https://img.shields.io/badge/code%20style-ruff-000000.svg)](https://docs.astral.sh/ruff/)
@@ -12,14 +12,14 @@
 
 **What is an Agent Harness?** A harness is a coordination layer or scaffolding around AI agents that allows them to work for hours (or days) on complex tasks without overwhelming their context window. Instead of asking an agent to do everything at once, a harness connects multiple agent sessions together—each starting fresh but quickly catching up via structured artifacts, then making incremental progress before handing off to the next session.
 
-Coding Harness is an autonomous coding agent orchestration system that combines Claude AI with a terminal user interface (TUI) for milestone-based development workflows. It takes specification files, breaks them into GitLab issues, and uses AI agents to implement each issue with human oversight at critical decision points.
+Coding Harness is an autonomous coding agent orchestration system that combines Claude AI with a terminal user interface (TUI) for milestone-based development workflows. It takes specification files, breaks them into issues (GitLab or local JSON files), and uses AI agents to implement each issue with human oversight at critical decision points.
 
 ```
-┌──────────┐    ┌──────────┐    ┌──────────────────┐    ┌──────────┐
-│   Spec   │───▶│   TUI    │───▶│  Claude Agents   │───▶│  GitLab  │
-│   File   │    │ (human)  │    │ (Init→Code→MR)   │    │ (issues) │
-└──────────┘    └────┬─────┘    └────────┬─────────┘    └──────────┘
-                     │                   │
+┌──────────┐    ┌──────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Spec   │───▶│   TUI    │───▶│  Claude Agents   │───▶│ GitLab (default)│
+│   File   │    │ (human)  │    │ (Init→Code→MR)   │    │ - OR -          │
+└──────────┘    └────┬─────┘    └────────┬─────────┘    │ Local JSON files│
+                     │                   │              └─────────────────┘
                      └───── 8 HITL ──────┘
                           checkpoints
 ```
@@ -209,11 +209,13 @@ The key insight: **agents need structured artifacts to quickly understand projec
 |--------|------------|--------------|
 | Work units | 200 tiny test cases | GitLab issues (fewer, larger) |
 | Granularity | Each test ≈ one session | Each issue may span multiple sessions |
-| Progress tracking | `passes: false → true` in JSON | GitLab comments + "in-progress" label |
-| Completion signal | Edit JSON field | Close issue via GitLab API |
+| Progress tracking | `passes: false → true` in JSON | GitLab comments + "in-progress" label (or local JSON in file-only mode) |
+| Completion signal | Edit JSON field | Close issue via GitLab API (or update local JSON) |
 | State file | `claude-progress.txt` | `.gitlab_milestone.json` |
 | Human oversight | None (fully autonomous) | 8 HITL checkpoints |
 | Interface | CLI auto-loop | TUI with log streaming |
+| Issue tracking | Local JSON only | GitLab (default) or local JSON (file-only mode) |
+| MR creation | N/A | Optional (can skip to keep changes on branch) |
 
 **Key difference in granularity:** The quickstart decomposes specs into ~200 small test cases, each small enough to complete in a single context window. This harness uses GitLab issues—larger work units that may require multiple sessions to complete.
 
@@ -365,12 +367,38 @@ Current approach: A single coding agent handles implementation, testing, and cle
 
 **File tracking** *(solves: accidental pollution)*: Agents track exactly which files they modify in `session_files.tracked`. Only those files get pushed—never pre-existing user changes or unrelated modifications.
 
+### Operating Modes
+
+The harness supports flexible operating modes to fit different workflows:
+
+**GitLab Mode (Default)**
+- Issues and milestones tracked in GitLab
+- MR created automatically when coding completes
+- Full observability through GitLab's web interface
+
+**File-Only Mode**
+- Issues and milestones stored in local JSON files (`.claude-agent/<spec>/`)
+- No GitLab account required for issue tracking
+- Useful for: offline work, private repos, quick prototyping
+- Enable via TUI checkbox or `"file_only_mode": true` in JSON specs
+
+**Skip MR Creation**
+- Agent stops after coding completes
+- All changes remain on the feature branch
+- Useful for: manual review before MR, experimental work, draft features
+- Enable via TUI checkbox or `"skip_mr_creation": true` in JSON specs
+
+**Combined Modes**
+All modes can be combined. For example, file-only mode + skip MR creation gives you a fully local workflow where the agent codes but you handle all git operations manually afterward.
+
 ## Features
 
 *Each feature below addresses a specific harness challenge—context management, reliability, or coordination.*
 
 - **Interactive TUI** - Textual-based terminal interface for intuitive agent management
 - **GitLab Integration** - Automatic milestone creation, issue management, and merge request generation
+- **File-Only Mode** - Optional local JSON-based tracking instead of GitLab (no GitLab account required)
+- **Skip MR Creation** - Option to stop after coding without creating a merge request (keep changes on branch)
 - **8 HITL Checkpoints** - Human approval gates for project verification, issue breakdown, implementation review, and more
 - **Spec-to-Issues Breakdown** - AI-powered conversion of specifications into actionable GitLab issues
 - **Issue Enrichment** - Optional Context7 and SearxNG integration for researching libraries and best practices
@@ -392,6 +420,7 @@ Current approach: A single coding agent handles implementation, testing, and cle
 - **OR Python 3.11+** - [Download Python](https://www.python.org/downloads/) (for native mode)
 - **Git** - For repository operations
 - **GitLab Account** - With API access token ([Create Token](https://gitlab.com/-/user_settings/personal_access_tokens))
+  - *Optional if using file-only mode for issue tracking*
 - **Claude API Access** - Either:
   - Claude Code OAuth token (recommended) - Generate with `claude setup-token`
   - Anthropic API key - [Get API Key](https://console.anthropic.com/settings/keys)
@@ -458,11 +487,12 @@ nano .env  # or your preferred editor
 
 | Variable | Description |
 |----------|-------------|
-| `GITLAB_PERSONAL_ACCESS_TOKEN` | GitLab token with scopes: `api`, `read_api`, `read_repository`, `write_repository` |
+| `GITLAB_PERSONAL_ACCESS_TOKEN` | GitLab token with scopes: `api`, `read_api`, `read_repository`, `write_repository` (optional in file-only mode) |
 | `CLAUDE_CODE_OAUTH_TOKEN` | Claude Code OAuth token (preferred) |
 | `ANTHROPIC_API_KEY` | Alternative: Anthropic API key (if not using OAuth) |
 
 *Note: You need either `CLAUDE_CODE_OAUTH_TOKEN` OR `ANTHROPIC_API_KEY`, not both.*
+*Note: `GITLAB_PERSONAL_ACCESS_TOKEN` is optional if using file-only mode for issue tracking.*
 
 ### Optional Environment Variables
 
@@ -563,7 +593,36 @@ For automation or scripting, provide specs as JSON:
 }]'
 ```
 
-> **Note:** Git operations use GitLab MCP with `GITLAB_PERSONAL_ACCESS_TOKEN`. Commits are attributed to the token owner's GitLab identity.
+**With optional flags:**
+
+```bash
+# File-only mode (no GitLab required)
+./start.sh --specs '[{
+  "spec_file": "/path/to/feature-spec.txt",
+  "project_dir": "/path/to/your/project",
+  "target_branch": "main",
+  "file_only_mode": true
+}]'
+
+# Skip MR creation (keep changes on branch)
+./start.sh --specs '[{
+  "spec_file": "/path/to/feature-spec.txt",
+  "project_dir": "/path/to/your/project",
+  "target_branch": "main",
+  "skip_mr_creation": true
+}]'
+
+# Both flags together
+./start.sh --specs '[{
+  "spec_file": "/path/to/feature-spec.txt",
+  "project_dir": "/path/to/your/project",
+  "target_branch": "main",
+  "file_only_mode": true,
+  "skip_mr_creation": true
+}]'
+```
+
+> **Note:** Git operations use GitLab MCP with `GITLAB_PERSONAL_ACCESS_TOKEN`. Commits are attributed to the token owner's GitLab identity. In file-only mode, GitLab is not required for issue tracking but is still used for git operations.
 
 ### Auto-Accept Mode
 
@@ -745,8 +804,11 @@ This harness achieves similar observability through GitLab's native issue tracki
 1. **Select Repository** - Choose a directory containing a git repository
 2. **Select Spec File** - Pick the specification file to implement
 3. **Select Target Branch** - Choose which branch to target for the merge request
-4. **Select Code Quality Skill** - Pick a language preset (Python, TypeScript, etc.) or skip
-5. **Agent Execution** - Watch the agent work with HITL checkpoints for your approval
+4. **Agent Options** - Configure behavior:
+   - **File-only mode** - Use local JSON files instead of GitLab for tracking
+   - **Skip MR creation** - Stop after coding without creating a merge request
+5. **Advanced Options** - Configure iterations and other settings
+6. **Agent Execution** - Watch the agent work with HITL checkpoints for your approval
 
 ### Writing a Specification File
 
@@ -1048,39 +1110,6 @@ The coding harness uses a **pluggable code quality skill system**. Code quality 
 
 **For this project:** See `.claude/skills/code-quality.md` for the specific commands used.
 
-### Pluggable Code Quality System (Target Projects)
-
-The coding harness uses a **language-agnostic, pluggable code quality system**. When agents work on your projects, they read code quality commands from a skill preset that you select during agent setup.
-
-**How it works:**
-1. During TUI agent setup, you select a code quality preset (after branch selection)
-2. The preset is copied to the project's `.claude/skills/code-quality/SKILL.md`
-3. Agents invoke the `code-quality` skill which reads commands from the preset
-4. This approach supports any language: Python, TypeScript, Go, Rust, Java, etc.
-
-**Built-in presets:**
-- `python-ruff` - Python with ruff linting/formatting and pyright type checking
-- `typescript-eslint` - TypeScript/JavaScript with ESLint and Prettier
-
-**TUI Workflow:**
-```
-Repo → Spec → Branch → Code Quality Skill → Advanced Options → Start
-                              ↑
-                        Select preset or browse
-```
-
-**To add custom presets:**
-
-1. Create a new `.md` file in `agent/skills/code-quality/presets/`
-2. Follow the structure of existing presets (frontmatter + sections)
-3. The preset will appear in the TUI selection screen
-
-**To skip preset selection:**
-- Click "Skip" in the code quality screen to use no preset
-- You can manually create `.claude/skills/code-quality/SKILL.md` in your project
-
-This allows the same coding harness to work with any codebase without modification to the agent prompts.
-
 ### Project Structure
 
 ```
@@ -1162,7 +1191,16 @@ A: Yes! Each new `./start.sh` creates a container named `coding-harness`, `codin
 A: In Docker mode: press `Q` to quit TUI - agents continue in daemon. Reconnect with `./start.sh --connect` or press Enter after restarting. Use `Ctrl+P, Ctrl+Q` to detach entirely. In native mode: agents stop when TUI exits (no persistence).
 
 **Q: Can I use this without GitLab?**
-A: No, GitLab integration is required. The harness creates milestones, issues, and merge requests on GitLab.
+A: Yes! Enable **file-only mode** in the TUI's Agent Options screen or use `"file_only_mode": true` in JSON specs. This stores milestones and issues in local JSON files instead of GitLab. Note: Git operations still use GitLab MCP for pushing commits.
+
+**Q: Can I skip merge request creation?**
+A: Yes! Enable **skip MR creation** in the TUI's Agent Options screen or use `"skip_mr_creation": true` in JSON specs. The agent will stop after coding completes and keep all changes on the feature branch without creating an MR.
+
+**Q: What's the difference between file-only mode and skip MR creation?**
+A: They're independent options:
+- **File-only mode** - Changes where issue/milestone tracking happens (GitLab vs local JSON files)
+- **Skip MR creation** - Changes whether an MR is created at the end (can be used with or without GitLab tracking)
+You can use either or both together.
 
 **Q: What Claude models are supported?**
 A: Default is `claude-opus-4-5-20251101`. You can use other models by setting `CLAUDE_MODEL`.

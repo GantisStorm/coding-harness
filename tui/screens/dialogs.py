@@ -12,6 +12,9 @@ from textual.widgets import Button, Input, Static
 
 from ..events import AddAnotherSpecResponse, AdvancedOptionsConfigured
 
+# Constants
+MAX_ITERATIONS_LIMIT = 1000
+
 
 class AddAnotherSpecDialog(Screen):
     """Dialog asking if user wants to add another spec file.
@@ -101,24 +104,25 @@ class AddAnotherSpecDialog(Screen):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button press events."""
-        button_id = event.button.id
+        button_id: str | None = event.button.id
 
         if button_id == "btn-yes":
-            self.post_message(AddAnotherSpecResponse(add_another=True))
-            self.dismiss()
+            self._respond_and_dismiss(add_another=True)
         elif button_id == "btn-no":
-            self.post_message(AddAnotherSpecResponse(add_another=False))
-            self.dismiss()
+            self._respond_and_dismiss(add_another=False)
+
+    def _respond_and_dismiss(self, add_another: bool) -> None:
+        """Post response message and dismiss dialog."""
+        self.post_message(AddAnotherSpecResponse(add_another=add_another))
+        self.dismiss()
 
     def action_add_another(self) -> None:
         """Quick action to add another spec."""
-        self.post_message(AddAnotherSpecResponse(add_another=True))
-        self.dismiss()
+        self._respond_and_dismiss(add_another=True)
 
     def action_done(self) -> None:
         """Quick action to finish adding specs."""
-        self.post_message(AddAnotherSpecResponse(add_another=False))
-        self.dismiss()
+        self._respond_and_dismiss(add_another=False)
 
 
 class AdvancedOptionsScreen(Screen):
@@ -176,6 +180,7 @@ class AdvancedOptionsScreen(Screen):
     """
 
     BINDINGS = [
+        ("enter", "apply", "Apply Settings"),
         ("escape", "use_defaults", "Use Defaults"),
     ]
 
@@ -200,7 +205,7 @@ class AdvancedOptionsScreen(Screen):
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """Handle button press events."""
-        button_id = event.button.id
+        button_id: str | None = event.button.id
 
         if button_id == "btn-defaults":
             self._use_defaults()
@@ -229,8 +234,8 @@ class AdvancedOptionsScreen(Screen):
                 if max_iterations <= 0:
                     self.notify("Max iterations must be a positive integer", severity="error")
                     return
-                if max_iterations > 1000:
-                    self.notify("Max iterations cannot exceed 1000", severity="error")
+                if max_iterations > MAX_ITERATIONS_LIMIT:
+                    self.notify(f"Max iterations cannot exceed {MAX_ITERATIONS_LIMIT}", severity="error")
                     return
             except ValueError:
                 self.notify("Max iterations must be a valid integer", severity="error")
@@ -245,3 +250,7 @@ class AdvancedOptionsScreen(Screen):
     def action_use_defaults(self) -> None:
         """Quick action to use defaults (ESC key)."""
         self._use_defaults()
+
+    def action_apply(self) -> None:
+        """Quick action to apply settings (Enter key)."""
+        self._apply_settings()

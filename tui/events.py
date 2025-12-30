@@ -6,8 +6,19 @@ Custom event types for TUI communication between widgets and agent runner.
 """
 
 from pathlib import Path
+from typing import Any
 
 from textual.message import Message
+
+__all__ = [
+    "RepoSelected",
+    "CheckpointResolved",
+    "SpecSelected",
+    "FileOnlyModeSelected",
+    "AgentConfigured",
+    "AddAnotherSpecResponse",
+    "AdvancedOptionsConfigured",
+]
 
 # =============================================================================
 # TUI Events
@@ -30,7 +41,7 @@ class CheckpointResolved(Message):
         status: str,  # "approved", "rejected", "modified"
         decision: str | None = None,  # For regression: fix_now, defer, rollback, false_positive
         notes: str | None = None,  # User guidance/notes
-        modifications: dict | None = None,  # For modified checkpoints
+        modifications: dict[str, Any] | None = None,  # For modified checkpoints
     ) -> None:
         self.status = status
         self.decision = decision
@@ -44,6 +55,15 @@ class SpecSelected(Message):
 
     def __init__(self, path: Path) -> None:
         self.path = path
+        super().__init__()
+
+
+class FileOnlyModeSelected(Message):
+    """Message sent when agent options are selected (file-only mode and skip MR creation)."""
+
+    def __init__(self, file_only_mode: bool, skip_mr_creation: bool) -> None:
+        self.file_only_mode = file_only_mode
+        self.skip_mr_creation = skip_mr_creation
         super().__init__()
 
 
@@ -73,12 +93,4 @@ class AdvancedOptionsConfigured(Message):
         max_iterations: int | None,
     ) -> None:
         self.max_iterations = max_iterations
-        super().__init__()
-
-
-class CodeQualitySkillSelected(Message):
-    """Message sent when a code quality skill preset is selected."""
-
-    def __init__(self, skill_path: Path | None) -> None:
-        self.skill_path = skill_path
         super().__init__()

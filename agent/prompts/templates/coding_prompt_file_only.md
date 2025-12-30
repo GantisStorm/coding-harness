@@ -1,9 +1,19 @@
+<!-- FILE-ONLY MODE VERSION -->
+<!-- This is the file-only mode version of the coding prompt. -->
+<!-- Instead of GitLab MCP tools for issue tracking, this uses local JSON files. -->
+<!-- Key differences from coding_prompt.md: -->
+<!--   - .gitlab_milestone.json -> .file_milestone.json -->
+<!--   - GitLab MCP issue reads -> read from .file_issues.json -->
+<!--   - GitLab MCP issue updates -> update .file_issues.json -->
+<!--   - GitLab MCP notes/comments -> read/write .issue_comments/{iid}.json -->
+<!--   - GitLab API calls for issues replaced with local file operations -->
+
 ## YOUR ROLE - CODING AGENT
 
 You are continuing work on a long-running autonomous development task.
 This is a FRESH context window - you have no memory of previous sessions.
 
-You have access to GitLab for project management via MCP tools. GitLab is your
+You have access to local JSON files for project management. The local files are your
 single source of truth for what needs to be built and what's been completed.
 
 ---
@@ -26,7 +36,12 @@ The `.claude-agent/` directory is your **local working directory**. It contains 
 ```
 .claude-agent/{{SPEC_SLUG}}/
 ├── .workspace_info.json      # Branch config, spec_hash, auto-accept setting
-├── .gitlab_milestone.json    # Milestone ID, project ID, issue count, progress
+├── .file_milestone.json      # Milestone ID, project ID, issue count, progress
+├── .file_issues.json         # All issues for this milestone
+├── .issue_comments/          # Directory for issue comments
+│   ├── 1.json                # Comments for issue iid=1
+│   ├── 2.json                # Comments for issue iid=2
+│   └── ...
 ├── .hitl_checkpoint_log.json # All checkpoint history with decisions
 └── app_spec.txt              # Copy of original specification
 ```
@@ -41,7 +56,9 @@ The `.claude-agent/` directory is your **local working directory**. It contains 
 | File | Purpose | When to read |
 |------|---------|--------------|
 | `.workspace_info.json` | Branch name, spec_hash | Session start (STEP 3) |
-| `.gitlab_milestone.json` | Milestone/project IDs | Any GitLab API call |
+| `.file_milestone.json` | Milestone/project IDs | Any local file operation |
+| `.file_issues.json` | All issues for milestone | Query/update issues |
+| `.issue_comments/{iid}.json` | Comments for issue | Reading/adding comments |
 | `.hitl_checkpoint_log.json` | Checkpoint state | Resume pending checkpoints |
 | `app_spec.txt` | Original requirements | Understanding feature scope |
 
@@ -162,7 +179,7 @@ Before doing anything else, check if there's an approved checkpoint from a previ
      ls -d .claude-agent/{{SPEC_SLUG}}-* 2>/dev/null | head -1 | sed 's/.*-//'
      ```
    - **If corrupted JSON:** Delete file, report error, and STOP
-   - Load `project_id` from `.gitlab_milestone.json` if not in workspace_info
+   - Load `project_id` from `.file_milestone.json` if not in workspace_info
 
 2. **Load the most recent pending checkpoint**
    - Use the Read tool on `.claude-agent/{{SPEC_SLUG}}/.hitl_checkpoint_log.json`
@@ -242,11 +259,11 @@ This contains important guidance, feedback, or context from the human reviewer.
    - Priority changes ("this is blocking, fix immediately")
    - Additional requirements ("also add a test to prevent this")
 3. **Adjust your approach** based on human_notes:
-   - `fix_now`: Reopen issue from `context.regressed_issue_iid`, add "in-progress" label, fix it WITH the specific checks from human_notes, then skip to **STEP 8** (Implement the Feature) to fix the regression
-   - `defer`: Create bug issue INCLUDING details from human_notes, add priority label if mentioned, then continue to **STEP 6** (Select Next Issue)
+   - `fix_now`: Reopen issue from `context.regressed_issue_iid` by updating `.file_issues.json`, add "in-progress" label, fix it WITH the specific checks from human_notes, then skip to **STEP 8** (Implement the Feature) to fix the regression
+   - `defer`: Create bug issue in `.file_issues.json` INCLUDING details from human_notes, add priority label if mentioned, then continue to **STEP 6** (Select Next Issue)
    - `rollback`: Run `git revert` on commits, add explanation from human_notes to commit message, then continue to **STEP 6** (Select Next Issue)
    - `false_positive`: Continue to **STEP 6** (Select Next Issue), but document in notes why it was false positive
-4. **Document in progress comment**: "Addressing regression per human feedback: [summary of human_notes]"
+4. **Document in progress comment**: "Addressing regression per human feedback: [summary of human_notes]" by writing to `.issue_comments/{iid}.json`
 5. **Mark checkpoint as completed**: Read the checkpoint log, find the checkpoint by ID, set `completed` to true and add `completed_at` timestamp, then write the updated log using the Write tool
 
 **For `regression_approval` (rejected):**
@@ -269,36 +286,32 @@ This contains important guidance, feedback, or context from the human reviewer.
    - "This is urgent" - Prioritize speed over optimization
    - "Focus on security" - Add extra security checks and validation
 4. **Adjust implementation plan** based on human_notes BEFORE starting work
-5. Get `project_id` from `.gitlab_milestone.json`
-6. **Get your GitLab user ID for assignment (REQUIRED - issues must be assigned):**
+5. Get `project_id` from `.file_milestone.json`
+6. **Get your user ID for assignment (REQUIRED - issues must be assigned):**
    - Run `git config user.email` and `git config user.name` to get your configured identity
-   - Call `mcp__gitlab__get_users` to get the users list
-   - Match your git config email/name against the users to find your GitLab user ID
-   - **If no match found:** Use the first user from the list (token owner is typically first)
-   - Cache this ID for use in all issue assignments
-   - **IMPORTANT:** Always assign - assigned issues appear in "Ongoing Issues" in milestone view
-7. **IMMEDIATELY claim the issue** using `mcp__gitlab__update_issue`:
-   - `project_id`: from context
-   - `issue_iid`: the selected issue IID (first from final_order)
-   - `issue_type`: "issue" (REQUIRED)
-   - `add_labels`: "in-progress" (comma-separated string, NOT an array)
-   - `assignee_ids`: [your_user_id] (array of integers - this makes the issue show in "ongoing")
-   - This signals the issue is being worked on AND assigns it to you
-8. **Add initial progress comment with adjustments** using `mcp__gitlab__create_note`:
-   ```markdown
-   ## Work Started
-
-   **Started at:** [ISO 8601 timestamp]
-   **Agent:** Autonomous Coding Agent
-
-   Beginning implementation of this feature.
-   [IF human_notes present]: **Adjustments based on human feedback:** [summary of what you'll do differently]
-
-   Will provide progress updates as work continues.
+   - Use this as your identifier for assignment
+   - **IMPORTANT:** Always assign - assigned issues appear in "Ongoing Issues" view
+7. **IMMEDIATELY claim the issue** by updating `.file_issues.json`:
+   - Read the file
+   - Find the issue with the selected IID
+   - Add "in-progress" to its `labels` array
+   - Set `assignee` to your user identifier
+   - Write the updated file
+8. **Add initial progress comment with adjustments** by writing to `.issue_comments/{iid}.json`:
+   - Read existing file (or start with `[]` if doesn't exist)
+   - Append a new comment object:
+   ```json
+   {
+     "id": "[generated unique id]",
+     "body": "## Work Started\n\n**Started at:** [ISO 8601 timestamp]\n**Agent:** Autonomous Coding Agent\n\nBeginning implementation of this feature.\n[IF human_notes present]: **Adjustments based on human feedback:** [summary of what you'll do differently]\n\nWill provide progress updates as work continues.",
+     "created_at": "[ISO timestamp]",
+     "author": "agent"
+   }
    ```
+   - Write the updated file
 9. **Read the issue content (CRITICAL - before implementing):**
-   - Use `mcp__gitlab__get_issue` to read the full issue description
-   - Use `mcp__gitlab__list_issue_notes` to read ALL comments
+   - Read `.file_issues.json` to get the full issue description
+   - Read `.issue_comments/{iid}.json` to read ALL comments
    - Look for **Implementation Guide** in description (from enrichment)
    - Look for **Research Documentation** comment (from enrichment)
    - Look for **Session Ended** comments (from previous sessions)
@@ -326,22 +339,22 @@ This contains important guidance, feedback, or context from the human reviewer.
    - Follow-up items to track
    - Lessons learned to record
 3. **Calculate timeline** by reading issue comments:
-   - Find the "Work Started" comment timestamp
+   - Read `.issue_comments/{iid}.json` to find the "Work Started" comment timestamp
    - Calculate time from start to completion
    - Extract any progress milestone timestamps
-4. **Add implementation comment with timeline AND human feedback** to the issue using `mcp__gitlab__create_note`:
+4. **Add implementation comment with timeline AND human feedback** to the issue by writing to `.issue_comments/{iid}.json`:
    - Include timeline (started, completed, duration, milestones)
    - Include implementation summary from `context.implementation_summary`
    - Include human approval confirmation
    - **Include section**: "Human Feedback: [human_notes content]" if notes present
    - If human_notes mentions follow-up, add section: "Follow-up Items: [list from notes]"
-5. **Mark issue as "completed"** using `mcp__gitlab__update_issue`:
-   - `project_id`: from context
-   - `issue_iid`: from context
-   - `issue_type`: "issue" (REQUIRED)
-   - `state_event`: "close"
-   - `remove_labels`: "in-progress" (comma-separated string, NOT an array)
-   - `add_labels`: "completed" (comma-separated string, NOT an array)
+5. **Mark issue as "completed"** by updating `.file_issues.json`:
+   - Read the file
+   - Find the issue with matching IID
+   - Set `state` to "closed"
+   - Remove "in-progress" from `labels` array
+   - Add "completed" to `labels` array
+   - Write the updated file
 6. **Mark checkpoint as completed**: Read the checkpoint log, find the checkpoint by ID, set `completed` to true and add `completed_at` timestamp, then write the updated log using the Write tool
 7. Proceed to STEP 12 to check if all issues are closed
 
@@ -354,7 +367,7 @@ This contains important guidance, feedback, or context from the human reviewer.
 2. **Create fix plan** based on human_notes:
    - List each item from notes
    - Plan how to address each one
-3. **Add comment documenting the feedback**:
+3. **Add comment documenting the feedback** by writing to `.issue_comments/{iid}.json`:
    ```markdown
    ## Closure Rejected - Addressing Feedback
 
@@ -385,11 +398,11 @@ This contains important guidance, feedback, or context from the human reviewer.
 |------|-------------|-------|
 | STEP 0 (Checkpoint) | 2-5 min | Quick file reads |
 | STEP 1 (Get Bearings) | 5-10 min | Orientation only |
-| STEP 2-3 (Milestone Status) | 5 min | API queries |
+| STEP 2-3 (Milestone Status) | 5 min | File queries |
 | STEP 4 (Read Docs) | 5-10 min | Skim, don't deep read |
 | STEP 5 (Verification) | 15-30 min | Tests + dead code |
 | STEP 6 (Issue Selection) | 5-10 min | Query + checkpoint |
-| STEP 7 (Claim Issue) | 2 min | Label update |
+| STEP 7 (Claim Issue) | 2 min | File update |
 | **STEP 8 (Implementation)** | **60-90% of session** | Core work |
 | STEP 9 (Browser Verify) | 10-20 min | Testing |
 | STEP 10-11 (Push/Close) | 5-10 min | Finalization |
@@ -406,7 +419,7 @@ Start by orienting yourself:
 2. **List files:** Use Bash `ls -la` to see project structure
 3. **Read workspace config:** Use Read tool on `.claude-agent/{{SPEC_SLUG}}/.workspace_info.json`
 4. **Read project spec:** Use Read tool on `.claude-agent/{{SPEC_SLUG}}/app_spec.txt`
-5. **Read milestone state:** Use Read tool on `.claude-agent/{{SPEC_SLUG}}/.gitlab_milestone.json`
+5. **Read milestone state:** Use Read tool on `.claude-agent/{{SPEC_SLUG}}/.file_milestone.json`
 6. **Reset session file tracking** (see below)
 7. **Check git history:** `git log --oneline -20`
 
@@ -415,15 +428,20 @@ Start by orienting yourself:
 .claude-agent/{{SPEC_SLUG}}/
 ├── .workspace_info.json       # Workspace config (target branch, feature branch name)
 ├── app_spec.txt               # Project specification
-├── .gitlab_milestone.json     # Milestone state (created by initializer)
+├── .file_milestone.json       # Milestone state (created by initializer)
+├── .file_issues.json          # All issues for this milestone
+├── .issue_comments/           # Directory for issue comments
+│   ├── 1.json                 # Comments for issue iid=1
+│   ├── 2.json                 # Comments for issue iid=2
+│   └── ...
 └── .hitl_checkpoint_log.json  # HITL checkpoint history (persistent log)
 ```
 
 Understanding the `app_spec.txt` is critical - it contains the requirements
 for the features you're adding to this existing codebase.
 
-The `.gitlab_milestone.json` file contains:
-- `project_id`: GitLab project ID for all queries
+The `.file_milestone.json` file contains:
+- `project_id`: Project ID for all queries
 - `milestone_id`: Current milestone being worked on
 - `milestone_title`: Milestone name
 - `feature_branch`: Git branch for this milestone
@@ -433,7 +451,7 @@ The `.gitlab_milestone.json` file contains:
 
 **Step 6: Reset Session File Tracking**
 
-At the START of each session, reset the `session_files` field in `.gitlab_milestone.json`:
+At the START of each session, reset the `session_files` field in `.file_milestone.json`:
 
 ```json
 {
@@ -455,29 +473,20 @@ add them to `session_files.tracked`. When pushing, ONLY push files in this array
 
 ### STEP 2: CHECK MILESTONE STATUS
 
-Query GitLab to understand the current milestone state using milestone state queries.
+Read `.file_issues.json` to understand the current milestone state.
 
-**Query milestone states separately to understand what's in flight:**
+**Query milestone states by filtering the issues array:**
 
-1. **Unstarted Issues** - `mcp__gitlab__get_milestone_issue` with:
-   - `project_id` from `.gitlab_milestone.json`
-   - `milestone_id` from `.gitlab_milestone.json`
+1. **Unstarted Issues** - Filter for:
    - `state`: "opened"
-   - `not_assignee_id`: 0 (unassigned issues only)
-   - `per_page`: 10 (to avoid token overflow)
+   - `assignee`: null or empty (unassigned issues only)
 
-2. **Ongoing Issues** - `mcp__gitlab__get_milestone_issue` with:
-   - `project_id` from `.gitlab_milestone.json`
-   - `milestone_id` from `.gitlab_milestone.json`
+2. **Ongoing Issues** - Filter for:
    - `state`: "opened"
-   - `assignee_id`: [specific user ID to filter by assignee] (optional - omit to get all assigned issues)
-   - `per_page`: 10
+   - `assignee`: not null (assigned to someone)
 
-3. **Completed Issues** - `mcp__gitlab__get_milestone_issue` with:
-   - `project_id` from `.gitlab_milestone.json`
-   - `milestone_id` from `.gitlab_milestone.json`
+3. **Completed Issues** - Filter for:
    - `state`: "closed"
-   - `per_page`: 10
 
 This gives you a clear view of:
 - What work hasn't been started (open + unassigned)
@@ -485,10 +494,9 @@ This gives you a clear view of:
 - What's been completed (closed)
 
 **IMPORTANT: Token Limit Mitigation**
-- GitLab tools can return large outputs that exceed token limits
-- ALWAYS use `per_page` parameter to limit results (max 10 per query)
-- Use specific filters (`state`, `assignee_id`, `labels`) to narrow results
-- Fetch issues in separate, focused queries rather than one large query
+- When reading `.file_issues.json`, the file may contain many issues
+- Process issues in memory after reading
+- Use specific filters to narrow results
 
 ---
 
@@ -496,8 +504,8 @@ This gives you a clear view of:
 
 After getting the milestone issues, check if ALL issues are closed.
 
-**If all issues in the milestone are closed:**
-1. Update `.claude-agent/{{SPEC_SLUG}}/.gitlab_milestone.json` to set `all_issues_closed: true`
+**If all issues in `.file_issues.json` have `state: "closed"`:**
+1. Update `.claude-agent/{{SPEC_SLUG}}/.file_milestone.json` to set `all_issues_closed: true`
 2. **END SESSION IMMEDIATELY**
 3. The MR creation phase will handle creating the merge request
 
@@ -568,12 +576,12 @@ Common commands (if documented in project):
 - Any unused variables that span more than 5 lines
 
 **Cleanup time budget: 15 minutes maximum**
-- If cleanup would require more than 15 minutes, create a bug issue titled "Code cleanup needed: [area]"
+- If cleanup would require more than 15 minutes, create a bug issue in `.file_issues.json` titled "Code cleanup needed: [area]"
 - Continue to new work after creating the issue
 
 **If you find significant dead code within budget:**
 - Remove it before continuing to new work
-- **Add cleaned files to `session_files.tracked`** in `.gitlab_milestone.json`
+- **Add cleaned files to `session_files.tracked`** in `.file_milestone.json`
 - Push ONLY the files you cleaned via MCP with commit message "Remove dead code from previous session"
 - Document what was cleaned up in the commit message
 - This prevents dead code from accumulating across sessions
@@ -630,7 +638,7 @@ FOR each failing_test:
 
     IF still failing after 3 iterations:
         - Document the issue
-        - Create a bug issue for this specific test
+        - Create a bug issue in `.file_issues.json` for this specific test
         - Skip this test with @pytest.mark.skip or equivalent
         - Add skip reason: "Skipped: Needs investigation - see issue #X"
 END FOR
@@ -648,14 +656,14 @@ END FOR
 | `ImportError` / `ModuleNotFoundError` | Refactored imports | Update import paths in test |
 
 **Time budget for test repair: 30 minutes maximum**
-- If repairs would take longer, create bug issues for remaining failures
+- If repairs would take longer, create bug issues in `.file_issues.json` for remaining failures
 - Skip problematic tests with clear skip reasons
 - Proceed with new work
 
 **After fixing tests, push via MCP:**
 ```
 mcp__gitlab__push_files(
-  project_id: [from .gitlab_milestone.json],
+  project_id: [from .file_milestone.json],
   branch: [feature_branch],
   commit_message: "Fix failing tests before new implementation
 
@@ -669,15 +677,13 @@ mcp__gitlab__push_files(
 
 #### 5C: Feature Regression Testing
 
-Use `mcp__gitlab__get_milestone_issue` with:
-- `project_id` from `.gitlab_milestone.json`
-- `milestone_id` from `.gitlab_milestone.json`
+Read `.file_issues.json` and filter for:
 - `state`: "closed"
-- `labels`: "completed"
-- `per_page`: 5 (limit to avoid token overflow)
+- `labels` contains "completed"
+- Limit to 5 issues
 
 **Feature selection criteria (pick 2, or all if fewer exist):**
-1. Features with "priority-high" or "priority-urgent" labels
+1. Features with "priority-high" or "priority-urgent" labels if present
 2. Features that touch authentication, authorization, or data persistence
 3. Features that other issues depend on (check issue descriptions for references)
 4. The 2 most recently completed features
@@ -742,11 +748,11 @@ DECISION OPTIONS:
 
 ┌─────────────────────────────────────────────────────────────┐
 │  [fix_now]        Fix the regression before continuing      │
-│                   - Reopen issue, add "in-progress" label   │
+│                   - Reopen issue in .file_issues.json       │
 │                   - Fix regression first, then resume       │
 │                                                             │
 │  [defer]          Mark as known issue, continue new work    │
-│                   - Create new bug issue for regression     │
+│                   - Create new bug issue in .file_issues.json│
 │                   - Proceed with originally planned work    │
 │                                                             │
 │  [rollback]       Rollback changes that caused regression   │
@@ -768,8 +774,8 @@ DECISION OPTIONS:
 **STOP AND WAIT** for human to decide how to proceed.
 
 **After decision:**
-- `fix_now` - Reopen issue, add "in-progress" label, fix before new work
-- `defer` - Create new bug issue, continue with planned work
+- `fix_now` - Reopen issue in `.file_issues.json`, add "in-progress" label, fix before new work
+- `defer` - Create new bug issue in `.file_issues.json`, continue with planned work
 - `rollback` - Run `git revert` on problematic commits
 - `false_positive` - Clear checkpoint, continue with planned work
 
@@ -777,23 +783,20 @@ DECISION OPTIONS:
 
 ### STEP 6: SELECT NEXT ISSUE TO WORK ON
 
-Query for **unstarted issues only** using state and assignee filters.
+Query for **unstarted issues only** by reading and filtering `.file_issues.json`.
 
-Use `mcp__gitlab__get_milestone_issue` with:
-- `project_id` from `.gitlab_milestone.json`
-- `milestone_id` from `.gitlab_milestone.json`
+Read `.file_issues.json` and filter for:
 - `state`: "opened"
-- `not_assignee_id`: 0 (unassigned issues only - excludes in-progress work)
-- `per_page`: 10 (limit to avoid token overflow)
+- `assignee`: null or empty (unassigned issues only - excludes in-progress work)
 
 This query returns only issues that are:
 - Open (not closed)
 - Unassigned (not being worked on by anyone)
 
 **If query returns ZERO issues:**
-1. Check if all issues are assigned (query without `not_assignee_id` filter)
+1. Check if all issues are assigned (query without assignee filter)
 2. If all assigned: Report "All issues are currently assigned. Waiting for availability."
-3. If all closed: Update `.gitlab_milestone.json` with `all_issues_closed: true` and END SESSION
+3. If all closed: Update `.file_milestone.json` with `all_issues_closed: true` and END SESSION
 4. Create a checkpoint explaining the situation and STOP
 
 From the results:
@@ -825,12 +828,10 @@ From the results:
 
 Before claiming an issue, you MUST get human approval on your selection.
 
-**Get your GitLab user ID** (REQUIRED - issues must be assigned):
+**Get your user ID** (REQUIRED - issues must be assigned):
 - Run `git config user.email` and `git config user.name` to get your configured identity
-- Call `mcp__gitlab__get_users` to get the users list
-- Match your git config email/name against the users to find your GitLab user ID
-- **If no match found:** Use the first user from the list (token owner is typically first)
-- **IMPORTANT:** Always assign - assigned issues appear in "Ongoing Issues" in milestone view
+- Use this as your identifier for assignment
+- **IMPORTANT:** Always assign - assigned issues appear in "Ongoing Issues" view
 
 **Create checkpoint:**
 1. Extract spec_hash from workspace info:
@@ -864,7 +865,7 @@ HITL CHECKPOINT: ISSUE SELECTION - RANKED ORDER
 ================================================================
 
 WHAT HAPPENED:
-  - LLM queried open issues from GitLab milestone
+  - LLM queried open issues from local .file_issues.json
   - LLM analyzed priorities and dependencies
   - LLM ranked all issues by recommended work order
   - Human can reorder (or leave blank to use LLM order)
@@ -911,19 +912,19 @@ ALL AVAILABLE ISSUES ([count] open):
 ### STEP 7: CLAIM THE ISSUE
 
 **NOTE:** If you came from STEP 0 with an approved `issue_selection` checkpoint, you already:
-- Added the "in-progress" label AND assigned the issue to yourself
-- Added the initial progress comment
+- Added the "in-progress" label AND assigned the issue to yourself in `.file_issues.json`
+- Added the initial progress comment to `.issue_comments/{iid}.json`
 - Cleared the checkpoint
 - Skip directly to STEP 8
 
 **For normal flow (coming from STEP 6 CHECKPOINT approval):**
 
-1. **Claim the issue** using `mcp__gitlab__update_issue`:
-   - `project_id`: from `.gitlab_milestone.json`
-   - `issue_iid`: the selected issue IID
-   - `issue_type`: "issue" (REQUIRED)
-   - `add_labels`: "in-progress" (comma-separated string, NOT an array)
-   - `assignee_ids`: [your_user_id] (array of integers - use ID from git config lookup)
+1. **Claim the issue** by updating `.file_issues.json`:
+   - Read the file
+   - Find the issue with the selected IID
+   - Add "in-progress" to its `labels` array
+   - Set `assignee` to your user identifier (from git config)
+   - Write the updated file
 
 2. **Review previous work on this issue (CRITICAL for multi-session issues):**
 
@@ -946,7 +947,7 @@ ALL AVAILABLE ISSUES ([count] open):
    ```
 
    **C. Read ALL issue comments (CRITICAL - contains enrichment and session context):**
-   Use `mcp__gitlab__list_issue_notes` to read ALL comments on the issue:
+   Read `.issue_comments/{iid}.json` to get ALL comments on the issue:
 
    **Enrichment Comments (from initializer - HIGHEST PRIORITY):**
    - Look for "## Research Documentation" comment - contains library docs, codebase analysis, integration points
@@ -979,7 +980,7 @@ ALL AVAILABLE ISSUES ([count] open):
    | Gotchas/blockers | Notes section | Avoid known pitfalls |
 
    **E. Read the issue DESCRIPTION for Implementation Guide (CRITICAL):**
-   Use `mcp__gitlab__get_issue` to read the full issue description.
+   Read the issue from `.file_issues.json` to get the full issue description.
 
    **If the issue was enriched, the description contains a complete Implementation Guide:**
    ```markdown
@@ -1017,7 +1018,9 @@ ALL AVAILABLE ISSUES ([count] open):
    - The issue was not enriched (human rejected enrichment)
    - Use the basic issue description and your own research
 
-3. **Add "Work Started" comment** using `mcp__gitlab__create_note`:
+3. **Add "Work Started" comment** by writing to `.issue_comments/{iid}.json`:
+   - Read existing file (or start with `[]` if doesn't exist)
+   - Append a new comment:
    ```markdown
    ## Session Started
    **Started:** [ISO 8601 timestamp, e.g., 2025-01-15T14:30:00Z]
@@ -1037,10 +1040,11 @@ ALL AVAILABLE ISSUES ([count] open):
    2. [Second thing]
    3. [Third thing]
    ```
+   - Write the updated file
 
 **IMPORTANT:** Both the label AND assignment are required:
 - The label (`in-progress`) allows filtering by workflow state
-- The assignment (`assignee_ids`) makes it show up in "ongoing issues" in the milestone view
+- The assignment (`assignee`) makes it show up in "ongoing issues" view
 
 This signals to any other agents (or humans watching) that this issue is being worked on.
 
@@ -1077,7 +1081,7 @@ This signals to any other agents (or humans watching) that this issue is being w
 
    **CRITICAL: Track files as you edit them.**
    After EACH file you create or modify, immediately update `session_files.tracked` in
-   `.gitlab_milestone.json`:
+   `.file_milestone.json`:
 
    ```json
    {
@@ -1251,7 +1255,7 @@ This signals to any other agents (or humans watching) that this issue is being w
    **Push tests with implementation:**
    Tests should be included in the same commit as the implementation they cover.
 
-4. **Add progress comment (REQUIRED - at least once per session)** using `mcp__gitlab__create_note`:
+4. **Add progress comment (REQUIRED - at least once per session)** by writing to `.issue_comments/{iid}.json`:
 
    You MUST add at least one progress update during implementation. Add it after completing
    a significant chunk of work (backend done, frontend done, major bug fixed, etc.):
@@ -1508,7 +1512,7 @@ REVIEW CHECKLIST:
 
 ┌─────────────────────────────────────────────────────────────┐
 │  IF APPROVED:                                               │
-│    - Close issue #[iid] as completed                        │
+│    - Close issue in .file_issues.json as completed          │
 │    - Add implementation summary comment                     │
 │    - Remove "in-progress" label, add "completed"            │
 │    - Proceed to next issue or MR phase                      │
@@ -1612,7 +1616,7 @@ Push your changes directly to GitLab using MCP tools.
 
 **Step 10.1: Get YOUR tracked files (NOT git status)**
 
-Read `.gitlab_milestone.json` and extract the `session_files.tracked` array.
+Read `.file_milestone.json` and extract the `session_files.tracked` array.
 These are the ONLY files you should push.
 
 ```bash
@@ -1630,15 +1634,15 @@ ls -la [each file in session_files.tracked]
 
 **Step 10.2: Push ONLY your tracked files via GitLab MCP**
 
-1. **Read `session_files.tracked`** from `.gitlab_milestone.json`
+1. **Read `session_files.tracked`** from `.file_milestone.json`
 2. **Verify each file exists** and was modified by you
 3. **Read each file's content** using the Read tool
 4. **Push via MCP** using the structured commit format:
 
 ```
 mcp__gitlab__push_files(
-  project_id: [from .gitlab_milestone.json],
-  branch: [feature_branch from .gitlab_milestone.json],
+  project_id: [from .file_milestone.json],
+  branch: [feature_branch from .file_milestone.json],
   commit_message: "feat(#42): Implement user login flow
 
 - Added login endpoint with JWT authentication
@@ -1659,7 +1663,7 @@ Issue: #42 - Add user authentication",
 **Step 10.3: Verify the push and capture commit SHA**
 ```
 mcp__gitlab__list_commits(
-  project_id: [from .gitlab_milestone.json],
+  project_id: [from .file_milestone.json],
   ref_name: [feature_branch],
   per_page: 1
 )
@@ -1672,7 +1676,7 @@ mcp__gitlab__list_commits(
 
 **IMPORTANT:**
 - **ONLY push files in `session_files.tracked`** - never push files you didn't explicitly create or edit
-- Always push to the feature branch specified in `.gitlab_milestone.json`, NOT to the target branch
+- Always push to the feature branch specified in `.file_milestone.json`, NOT to the target branch
 - You must read each file's content before pushing - MCP requires actual file content, not just paths
 - Do NOT use `git add`, `git commit`, or `git push` - use MCP exclusively for write operations
 - **Maximum 20 files per push operation** - if more files, split into multiple pushes
@@ -1689,7 +1693,7 @@ mcp__gitlab__list_commits(
 
 ---
 
-### STEP 11: CLOSE THE GITLAB ISSUE (CAREFULLY!)
+### STEP 11: CLOSE THE ISSUE (CAREFULLY!)
 
 **CRITICAL: You can ONLY reach this step in two ways:**
 1. From STEP 0 with an approved `issue_closure` checkpoint (resuming from previous session)
@@ -1699,8 +1703,8 @@ mcp__gitlab__list_commits(
 **If you have NOT pushed code in STEP 10, STOP. Push first.**
 
 **NOTE:** If you came from STEP 0 with an approved `issue_closure` checkpoint, you already:
-- Added the implementation comment
-- Closed the issue with "completed" label
+- Added the implementation comment to `.issue_comments/{iid}.json`
+- Closed the issue in `.file_issues.json` with "completed" label
 - Cleared the checkpoint
 - Skip directly to STEP 12
 
@@ -1709,7 +1713,7 @@ mcp__gitlab__list_commits(
 After pushing code successfully:
 
 1. **Calculate timeline** by reading issue comments:
-   - Find the "Work Started" comment timestamp
+   - Read `.issue_comments/{iid}.json` to find the "Work Started" comment timestamp
    - Calculate time from start to completion
    - Extract any progress milestone timestamps
 
@@ -1718,7 +1722,7 @@ After pushing code successfully:
    - 1-24 hours: "2h 15m", "8h 30m"
    - Over 24 hours: "2d 4h" (convert to days)
 
-2. **Add implementation comment with timeline** using `mcp__gitlab__create_note`:
+2. **Add implementation comment with timeline** by writing to `.issue_comments/{iid}.json`:
    ```markdown
    ## Implementation Complete
 
@@ -1742,11 +1746,13 @@ After pushing code successfully:
    [commit hash and message]
    ```
 
-3. **Update issue** using `mcp__gitlab__update_issue`:
-   - `issue_type`: "issue" (REQUIRED)
-   - Close the issue (set `state_event` to "close")
-   - Remove "in-progress" label
-   - Add "completed" label
+3. **Update issue** by modifying `.file_issues.json`:
+   - Read the file
+   - Find the issue with matching IID
+   - Set `state` to "closed"
+   - Remove "in-progress" from `labels` array
+   - Add "completed" to `labels` array
+   - Write the updated file
 
 **ONLY close the issue AFTER:**
 - All test steps in the issue description pass (or generate 3 basic tests if none specified)
@@ -1776,14 +1782,10 @@ After pushing code successfully:
 
 After closing an issue, check if all milestone issues are now complete:
 
-Use `mcp__gitlab__get_milestone_issue` with:
-- `project_id` from `.gitlab_milestone.json`
-- `milestone_id` from `.gitlab_milestone.json`
-- `state`: "opened"
-- `per_page`: 10
+Read `.file_issues.json` and check if all issues have `state: "closed"`.
 
-**If the query returns NO open issues:**
-1. Update `.claude-agent/{{SPEC_SLUG}}/.gitlab_milestone.json` to set `all_issues_closed: true`
+**If all issues are closed:**
+1. Update `.claude-agent/{{SPEC_SLUG}}/.file_milestone.json` to set `all_issues_closed: true`
 2. Add a `notes` field: "All milestone issues completed, ready for MR creation"
 3. Write the updated file using the Write tool (this is a LOCAL file, do NOT push to GitLab)
 
@@ -1865,7 +1867,7 @@ Before context fills up, you MUST perform a clean handoff:
 
 1. **Get YOUR tracked files to push**
 
-   Read `.gitlab_milestone.json` and extract `session_files.tracked`.
+   Read `.file_milestone.json` and extract `session_files.tracked`.
    These are the ONLY files you should push.
 
    > **Do NOT use `git status`** - it shows all modified files including
@@ -1875,14 +1877,14 @@ Before context fills up, you MUST perform a clean handoff:
    > **WHY MCP-ONLY?** All git write operations go through GitLab MCP tools.
    > Local git is used ONLY for read operations.
 
-   - Read `session_files.tracked` from `.gitlab_milestone.json`
+   - Read `session_files.tracked` from `.file_milestone.json`
    - Count files for commit message
    - Read each file's content using the Read tool
    - Push via MCP using the commit format from "COMMIT MESSAGE FORMAT" section:
    ```
    mcp__gitlab__push_files(
-     project_id: [from .gitlab_milestone.json],
-     branch: [feature_branch from .gitlab_milestone.json],
+     project_id: [from .file_milestone.json],
+     branch: [feature_branch from .file_milestone.json],
      commit_message: "feat(#42): [WIP] Partial implementation of feature
 
 - Completed: [what you finished]
@@ -1904,7 +1906,7 @@ Status: [X]% complete - session ended",
 3. **Verify the push and capture commit SHA**:
    ```
    mcp__gitlab__list_commits(
-     project_id: [from .gitlab_milestone.json],
+     project_id: [from .file_milestone.json],
      ref_name: [feature_branch],
      per_page: 1
    )
@@ -1916,6 +1918,7 @@ Status: [X]% complete - session ended",
 
    If the issue isn't complete, you MUST add a handoff comment so the next session knows where to continue:
 
+   Write to `.issue_comments/{iid}.json`:
    ```markdown
    ## Session Ended
    **Ended:** [ISO 8601 timestamp]
@@ -1985,8 +1988,6 @@ Status: [X]% complete - session ended",
    - **If failing:** [which tests and why]
    ```
 
-   Use `mcp__gitlab__create_note` to add this comment.
-
    **Why this matters:** The next session has NO memory. This comment IS the handoff.
    The more detailed you are, the faster the next session can continue.
 
@@ -2013,7 +2014,7 @@ Status: [X]% complete - session ended",
    - [What you finished]
 
    **Handoff:**
-   - Added detailed handoff comment to issue
+   - Added detailed handoff comment to .issue_comments/{iid}.json
    - Next session should: [1-2 sentence summary of next steps]
 
    **Milestone Progress:**
@@ -2024,7 +2025,7 @@ Status: [X]% complete - session ended",
 
 ---
 
-## GITLAB WORKFLOW RULES
+## ISSUE WORKFLOW RULES
 
 **Label Transitions:**
 - Opened (no labels) -> Opened + "in-progress" (when you start working)
@@ -2035,16 +2036,15 @@ Status: [X]% complete - session ended",
 - The labels above (`in-progress`, `completed`) are defaults
 - Check project's CLAUDE.md for custom label names
 - If custom labels are defined, use those instead
-- If label doesn't exist in project, it will be created automatically by GitLab
 
 **Discovering Project Labels:**
 1. Check CLAUDE.md for documented label conventions
-2. Query existing issues: `mcp__gitlab__get_milestone_issue` and inspect `labels` field
+2. Read `.file_issues.json` and inspect `labels` field on existing issues
 3. Look at closed issues for completion label patterns
-4. When in doubt, use defaults - GitLab auto-creates missing labels
+4. When in doubt, use defaults
 
 **Comments Are Your Memory:**
-- Every implementation gets a detailed comment via `mcp__gitlab__create_note`
+- Every implementation gets a detailed comment in `.issue_comments/{iid}.json`
 - Comments are permanent - future agents will read them
 - Use comments to document decisions, blockers, and handoffs
 
@@ -2059,7 +2059,7 @@ Status: [X]% complete - session ended",
 - **Push `.claude-agent/` files to GitLab** - these are local working files only
 
 **CRITICAL - Issue Closure Rule:**
-You CANNOT close an issue by directly calling `mcp__gitlab__update_issue` with `state_event: "close"`.
+You CANNOT close an issue by directly updating `.file_issues.json` with `state: "closed"`.
 You MUST first create an `issue_closure` checkpoint (STEP 9 CHECKPOINT) and wait for human approval.
 This applies to ALL issues, including ones that were "already implemented" in previous sessions.
 
@@ -2073,7 +2073,7 @@ This applies to ALL issues, including ones that were "already implemented" in pr
 - The feature branch contains all work for the milestone
 - Only create ONE merge request per milestone (after all issues are closed)
 
-**State File (.gitlab_milestone.json):**
+**State File (.file_milestone.json):**
 - This is your source of truth for milestone state
 - Update `all_issues_closed` when the last issue is completed
 - Never manually edit other fields unless instructed
@@ -2085,56 +2085,52 @@ This applies to ALL issues, including ones that were "already implemented" in pr
 
 ---
 
-## GITLAB API TOOLS
+## LOCAL FILE OPERATIONS
 
-**Key tools for milestone workflow:**
+**Key files for milestone workflow:**
 
-1. **`mcp__gitlab__get_milestone_issue`** - Query issues in a milestone
-   - Required params: `project_id`, `milestone_id`
-   - Optional: `state` (opened/closed), `labels`, `per_page`
+1. **`.file_issues.json`** - Query and update issues
+   - Read to get issue list
+   - Filter by `state`, `assignee`, `labels` in memory after reading
+   - Update to change state, labels, assignee
 
-2. **`mcp__gitlab__update_issue`** - Update issue state and labels
-   - Required params: `project_id`, `issue_iid`, `issue_type` ("issue")
-   - Optional: `state_event` (close/reopen), `labels`, `add_labels`, `remove_labels`
+2. **`.issue_comments/{iid}.json`** - Add comment to issue
+   - Read to get existing comments
+   - Append to add new comments
+   - Each comment has: id, body, created_at, author
 
-3. **`mcp__gitlab__create_note`** - Add comment to issue
-   - Required params: `project_id`, `noteable_type` ("issue"), `noteable_iid`, `body`
+3. **`.file_milestone.json`** - Milestone state
+   - Contains: project_id, milestone_id, milestone_title, feature_branch, target_branch, all_issues_closed, session_files
 
 **Token Limits:**
-- Always use `per_page` parameter (max 10 for safety)
-- Use specific filters (`state`, `labels`) to narrow results
-- Break queries into batches if needed
-- If output is truncated, refine your query with more specific filters
+- When reading `.file_issues.json`, the file may contain many issues
+- Process and filter in memory after reading
+- If files are very large, process incrementally
 
-**MCP Call Timeouts (implicit):**
-- Most MCP calls complete in < 10 seconds
-- If a call seems stuck (> 30 seconds), it likely failed silently
-- Retry once, then report API issue if still unresponsive
+**File Operation Timeouts (implicit):**
+- Most file operations complete quickly
+- If a read/write seems stuck, it likely failed silently
+- Retry once, then report issue if still unresponsive
 
-**API Error Handling:**
+**File Error Handling:**
 
 | Error Type | Action |
 |------------|--------|
-| Network timeout | Retry up to 3 times with 5-second delay between attempts |
-| 401 Unauthorized | **STOP** - Report "GitLab authentication failed. Check GITLAB_TOKEN." |
-| 403 Forbidden | **STOP** - Report "Permission denied for [operation]. Token may lack required scope." |
-| 404 Not Found | Check if resource ID is correct. If correct, report and continue. |
-| 429 Rate Limited | Wait 60 seconds, then retry once. If still rate limited, **STOP** and report. |
-| 500 Server Error | Retry up to 2 times. If persists, **STOP** and report "GitLab server error." |
+| File not found | Create with empty structure (e.g., `[]` for comments, `{}` for objects) |
+| Permission denied | **STOP** - Report file permission issue |
+| JSON parse error | Report error, attempt to recover or recreate file |
+| Disk full | **STOP** - Report disk space issue |
 
 **After 3 failed retries for any operation:**
-1. Document the failure in issue comment
-2. Create checkpoint if mid-implementation (to preserve progress)
-3. Report specific error to human
-4. **STOP AND WAIT** - do not proceed with broken API
+1. Document the failure in checkpoint if mid-implementation
+2. Report specific error to human
+3. **STOP AND WAIT** - do not proceed with broken file access
 
-**Example - GOOD (focused queries):**
+**Example - Reading and filtering issues:**
 ```
-# Check what's in progress
-mcp__gitlab__get_milestone_issue(project_id, milestone_id, state="opened", labels="in-progress", per_page=5)
-
-# Get available work
-mcp__gitlab__get_milestone_issue(project_id, milestone_id, state="opened", per_page=10)
+# Read .file_issues.json
+# Filter in memory for state="opened" and assignee=null
+# This gives unstarted issues
 ```
 
 ---
@@ -2216,7 +2212,7 @@ End the session after completing an issue when ANY of these are true:
 2. You had to retry any operation more than twice this session
 3. You encountered any error that required more than 3 tool calls to debug
 4. The current issue required changes to more than 10 files
-5. You have added 3+ progress comments to GitLab this session
+5. You have added 3+ progress comments this session
 6. Any regression fix was needed during this session
 
 **ALWAYS continue if:**
@@ -2260,7 +2256,7 @@ than to start another issue and risk running out of context mid-implementation.
 Err on the side of ending sessions early with good handoff notes. The next agent will continue.
 
 **When all issues are closed:**
-- Update `.claude-agent/{{SPEC_SLUG}}/.gitlab_milestone.json` locally with `all_issues_closed: true`
+- Update `.claude-agent/{{SPEC_SLUG}}/.file_milestone.json` locally with `all_issues_closed: true`
   (Use Write tool - this is a local file, NEVER pushed to GitLab)
 - END SESSION - don't create the MR yourself
 

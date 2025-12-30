@@ -48,7 +48,7 @@ from .events import (  # noqa: E402
     AdvancedOptionsConfigured,
     AgentConfigured,
     CheckpointResolved,
-    CodeQualitySkillSelected,
+    FileOnlyModeSelected,
     RepoSelected,
     SpecSelected,
 )
@@ -58,7 +58,7 @@ from .screens import (  # noqa: E402
     AdvancedOptionsScreen,
     BranchSelectScreen,
     CheckpointReviewScreen,
-    CodeQualityScreen,
+    FileOnlyModeScreen,
     LogViewerScreen,
     RepoSelectScreen,
     SpecSelectScreen,
@@ -68,16 +68,6 @@ from .screens import (  # noqa: E402
 STATUS_READY = "ready"
 STATUS_RUNNING = "running"
 STATUS_STOPPED = "stopped"
-STATUS_STARTING = "starting"
-
-# String truncation limits for display
-SPEC_NAME_MAX_LEN = 25
-SPEC_NAME_TRUNCATED_LEN = 22
-MODEL_SHORT_MAX_LEN = 10
-AGENT_NAME_MAX_LEN = 20
-AGENT_NAME_TRUNCATED_LEN = 17
-BRANCH_MAX_LEN = 10
-BRANCH_TRUNCATED_LEN = 7
 
 
 @dataclass
@@ -114,7 +104,6 @@ class AgentSession:
             self.config.project_dir,
             self.config.spec_file,
             self.config.target_branch,
-            self.config.code_quality_skill,
         )
         self.name = self.config.name
 
@@ -230,6 +219,8 @@ class CodingHarnessApp(App):
         self._batch_project_dir: Path | None = None
         self._batch_spec: Path | None = None
         self._batch_spec_base: dict | None = None
+        self._batch_file_only_mode: bool = False
+        self._batch_skip_mr_creation: bool = False
         self._changing_branch_agent: str | None = None
 
     def compose(self) -> ComposeResult:
@@ -301,7 +292,7 @@ class CodingHarnessApp(App):
                     try:
                         spec_config = SpecConfig.from_dict(config_dict)
                         session = AgentSession(agent_id, spec_config)
-                        session.status = agent_info.get("status", "stopped")
+                        session.status = agent_info.get("status", STATUS_STOPPED)
                         session.log_file = Path(agent_info["log_file"]) if agent_info.get("log_file") else None
                         self.agents[agent_id] = session
                         restored_count += 1
@@ -344,16 +335,13 @@ class CodingHarnessApp(App):
 
         return session
 
-    def _get_git_branch(self, project_dir: Path) -> str:
-        """Get the current git branch for the given working directory."""
-        return _get_current_branch(project_dir)
-
     def _update_info_bar(self) -> None:
         """Update the info bar with current context."""
         if self.selected_agent and self.selected_agent in self.agents:
             session = self.agents[self.selected_agent]
-            branch = self._get_git_branch(session.config.project_dir)
+            branch = _get_current_branch(session.config.project_dir)
             spec_name = session.config.spec_file.stem
+            # Truncate long spec names for display (max 25 chars, show 22 + ellipsis)
             if len(spec_name) > 25:
                 spec_name = spec_name[:22] + "..."
             status = session.status.upper()
@@ -361,6 +349,8 @@ class CodingHarnessApp(App):
             model_short = self._abbreviate_model(session.config.model)
 
             auto_indicator = " [AUTO]" if session.auto_accept else ""
+            file_only_indicator = " [FILE]" if session.config.file_only_mode else ""
+            no_mr_indicator = " [NO-MR]" if session.config.skip_mr_creation else ""
 
             hitl_indicator = ""
             checkpoint_type = get_pending_checkpoint_type(
@@ -383,7 +373,7 @@ class CodingHarnessApp(App):
             iters_indicator = "" if session.config.max_iterations is None else f" | max:{session.config.max_iterations}"
 
             text = (
-                f"{spec_name} | {status}{auto_indicator}{hitl_indicator} | "
+                f"{spec_name} | {status}{auto_indicator}{file_only_indicator}{no_mr_indicator}{hitl_indicator} | "
                 f"{branch} | {model_short}{iters_indicator} | ?"
             )
 
@@ -424,26 +414,27 @@ class CodingHarnessApp(App):
         """Format agent session as a 2-line Rich markup label.
 
         Line 1: {status}{hitl} {name}
-        Line 2:   {branch} {model} {iters}{cq}
+        Line 2:   {branch} {model} {iters}
 
         Returns:
             Rich markup formatted string with newline separator.
         """
         # Line 1: Status + HITL + Name
-        status_icon = {"ready": "○", "running": "●", "stopped": "■", "starting": "◐"}.get(session.status, "?")
+        status_icon = {STATUS_READY: "○", STATUS_RUNNING: "●", STATUS_STOPPED: "■"}.get(session.status, "?")
 
         hitl_icon = ""
         if is_checkpoint_pending(session.config.project_dir, session.spec_slug, session.config.spec_hash):
             hitl_icon = "!"
 
-        # Truncate name to 20 chars
+        # Truncate agent name for display (max 20 chars, show 17 + ellipsis)
         name = session.name
         if len(name) > 20:
             name = name[:17] + "..."
 
         line1 = f"{status_icon}{hitl_icon} {name}"
 
-        # Line 2: Branch + Model + Iterations + Code Quality
+        # Line 2: Branch + Model + Iterations
+        # Truncate branch name for display (max 10 chars, show 7 + ellipsis)
         branch = session.config.target_branch
         if len(branch) > 10:
             branch = branch[:7] + "..."
@@ -454,11 +445,7 @@ class CodingHarnessApp(App):
         if session.config.max_iterations is not None:
             iters = f" x{session.config.max_iterations}"
 
-        cq = ""
-        if session.config.code_quality_skill is not None:
-            cq = " Q"
-
-        line2 = f"  [dim]{branch} {model_short}{iters}{cq}[/dim]"
+        line2 = f"  [dim]{branch} {model_short}{iters}[/dim]"
 
         return f"{line1}\n{line2}"
 
@@ -492,7 +479,7 @@ class CodingHarnessApp(App):
             terminal = self.query_one(f"#{term_id}", LogTerminal)
             terminal.display = True
         except NoMatches:
-            if session.log_file and session.status in ("running", "stopped"):
+            if session.log_file and session.status in (STATUS_RUNNING, STATUS_STOPPED):
                 # Create terminal to tail log file
                 terminal = LogTerminal(log_file=session.log_file, id=term_id, classes="agent-terminal")
                 terminal_area = self.query_one("#terminal-area", Container)
@@ -548,7 +535,7 @@ class CodingHarnessApp(App):
             config_dict["auto_accept"] = session.auto_accept
             agent_info = await self._daemon_client.start_agent(agent_id, config_dict)
 
-            session.status = agent_info.get("status", "running")
+            session.status = agent_info.get("status", STATUS_RUNNING)
             session.log_file = Path(agent_info["log_file"]) if agent_info.get("log_file") else None
 
             # Create terminal to tail the log file
@@ -598,7 +585,7 @@ class CodingHarnessApp(App):
 
         try:
             agent_info = await self._daemon_client.stop_agent(agent_id)
-            session.status = agent_info.get("status", "stopped")
+            session.status = agent_info.get("status", STATUS_STOPPED)
             self._update_agent_list()
             self._update_info_bar()
             self.notify("Stopped agent")
@@ -644,13 +631,14 @@ class CodingHarnessApp(App):
             }
             self._batch_project_dir = None
             self._batch_spec = None
-            # Show code quality skill selection
-            self.push_screen(CodeQualityScreen())
+            # Show file-only mode selection screen next
+            self.push_screen(FileOnlyModeScreen())
 
-    def on_code_quality_skill_selected(self, event: CodeQualitySkillSelected) -> None:
-        """Handle code quality skill selection."""
+    def on_file_only_mode_selected(self, event: FileOnlyModeSelected) -> None:
+        """Handle file-only mode and skip MR creation selection."""
         if self._in_batch_mode and self._batch_spec_base:
-            self._batch_spec_base["code_quality_skill"] = event.skill_path
+            self._batch_file_only_mode = event.file_only_mode
+            self._batch_skip_mr_creation = event.skip_mr_creation
             self.push_screen(AdvancedOptionsScreen())
 
     def on_advanced_options_configured(self, event: AdvancedOptionsConfigured) -> None:
@@ -665,7 +653,8 @@ class CodingHarnessApp(App):
                     spec_hash=generate_spec_hash(self._batch_spec_base["spec_file"]),
                     name=self._batch_spec_base["spec_file"].stem,
                     max_iterations=event.max_iterations,
-                    code_quality_skill=self._batch_spec_base.get("code_quality_skill"),
+                    file_only_mode=self._batch_file_only_mode,
+                    skip_mr_creation=self._batch_skip_mr_creation,
                 )
             except ValueError as e:
                 self.notify(str(e), severity="error")
@@ -673,6 +662,8 @@ class CodingHarnessApp(App):
 
             self._batch_specs.append(spec_config)
             self._batch_spec_base = None
+            self._batch_file_only_mode = False  # Reset for next spec
+            self._batch_skip_mr_creation = False  # Reset for next spec
             self.push_screen(AddAnotherSpecDialog(len(self._batch_specs)))
 
     def on_add_another_spec_response(self, event: AddAnotherSpecResponse) -> None:
@@ -764,33 +755,32 @@ Daemon Architecture:
 
     def action_start_agent(self) -> None:
         """Start the selected agent."""
-        if not self.selected_agent or self.selected_agent not in self.agents:
-            self.notify("Select an agent first", severity="warning")
+        session = self._get_selected_session()
+        if not session:
             return
 
-        session = self.agents[self.selected_agent]
-        if session.status == "running":
+        if session.status == STATUS_RUNNING:
             self.notify("Agent already running", severity="warning")
             return
 
         # Start via daemon (async)
-        self.run_worker(self._start_agent_via_daemon(self.selected_agent))
+        self.run_worker(self._start_agent_via_daemon(session.agent_id))
 
     def action_stop_agent(self) -> None:
         """Stop the selected agent."""
-        if not self.selected_agent or self.selected_agent not in self.agents:
-            self.notify("Select an agent first", severity="warning")
+        session = self._get_selected_session()
+        if not session:
             return
 
-        self.run_worker(self._stop_agent_via_daemon(self.selected_agent))
+        self.run_worker(self._stop_agent_via_daemon(session.agent_id))
 
     def action_delete_agent(self) -> None:
         """Delete the selected agent."""
-        if not self.selected_agent or self.selected_agent not in self.agents:
-            self.notify("Select an agent first", severity="warning")
+        session = self._get_selected_session()
+        if not session:
             return
 
-        agent_id = self.selected_agent
+        agent_id = session.agent_id
 
         # Stop terminal
         term_id = f"term-{agent_id}"
@@ -817,12 +807,11 @@ Daemon Architecture:
 
     def action_change_branch(self) -> None:
         """Change the target branch of the selected agent."""
-        if not self.selected_agent or self.selected_agent not in self.agents:
-            self.notify("Select an agent first", severity="warning")
+        session = self._get_selected_session()
+        if not session:
             return
 
-        session = self.agents[self.selected_agent]
-        if session.status == "running":
+        if session.status == STATUS_RUNNING:
             self.notify("Stop the agent before changing branch", severity="warning")
             return
 
@@ -833,11 +822,10 @@ Daemon Architecture:
 
     def action_toggle_auto_accept(self) -> None:
         """Toggle auto-accept mode for the selected agent."""
-        if not self.selected_agent or self.selected_agent not in self.agents:
-            self.notify("No agent selected", severity="warning")
+        session = self._get_selected_session()
+        if not session:
             return
 
-        session = self.agents[self.selected_agent]
         session.auto_accept = not session.auto_accept
 
         if session.agent_dir:
@@ -853,13 +841,8 @@ Daemon Architecture:
 
     def action_hitl_approve(self) -> None:
         """Approve HITL checkpoint."""
-        if not self.selected_agent or self.selected_agent not in self.agents:
-            self.notify("No agent selected", severity="warning")
-            return
-
-        session = self.agents[self.selected_agent]
-        if session.status != "running":
-            self.notify("Agent not running", severity="warning")
+        session = self._get_selected_session(require_running=True)
+        if not session:
             return
 
         if not is_checkpoint_pending(session.config.project_dir, session.spec_slug, session.config.spec_hash):
@@ -876,11 +859,10 @@ Daemon Architecture:
 
     def action_copy_logs(self) -> None:
         """Copy the current agent's log file to clipboard."""
-        if not self.selected_agent or self.selected_agent not in self.agents:
-            self.notify("No agent selected", severity="warning")
+        session = self._get_selected_session()
+        if not session:
             return
 
-        session = self.agents[self.selected_agent]
         if not session.log_file or not session.log_file.exists():
             self.notify("No log file available", severity="warning")
             return
@@ -902,11 +884,10 @@ Daemon Architecture:
 
     def action_open_logs(self) -> None:
         """Open full-screen log viewer with selection and copy support."""
-        if not self.selected_agent or self.selected_agent not in self.agents:
-            self.notify("No agent selected", severity="warning")
+        session = self._get_selected_session()
+        if not session:
             return
 
-        session = self.agents[self.selected_agent]
         if not session.log_file or not session.log_file.exists():
             self.notify("No log file available", severity="warning")
             return
@@ -915,13 +896,8 @@ Daemon Architecture:
 
     def action_hitl_reject(self) -> None:
         """Reject HITL checkpoint."""
-        if not self.selected_agent or self.selected_agent not in self.agents:
-            self.notify("No agent selected", severity="warning")
-            return
-
-        session = self.agents[self.selected_agent]
-        if session.status != "running":
-            self.notify("Agent not running", severity="warning")
+        session = self._get_selected_session(require_running=True)
+        if not session:
             return
 
         if not is_checkpoint_pending(session.config.project_dir, session.spec_slug, session.config.spec_hash):
@@ -940,13 +916,8 @@ Daemon Architecture:
 
     def action_review_checkpoint(self) -> None:
         """Open the checkpoint review screen."""
-        if not self.selected_agent or self.selected_agent not in self.agents:
-            self.notify("No agent selected", severity="warning")
-            return
-
-        session = self.agents[self.selected_agent]
-        if session.status != "running":
-            self.notify("Agent not running", severity="warning")
+        session = self._get_selected_session(require_running=True)
+        if not session:
             return
 
         if not is_checkpoint_pending(session.config.project_dir, session.config.spec_slug, session.config.spec_hash):
@@ -964,11 +935,9 @@ Daemon Architecture:
 
     def on_checkpoint_resolved(self, event: CheckpointResolved) -> None:
         """Handle checkpoint resolution from the review screen."""
-        if not self.selected_agent or self.selected_agent not in self.agents:
-            self.notify("No agent selected", severity="warning")
+        session = self._get_selected_session()
+        if not session:
             return
-
-        session = self.agents[self.selected_agent]
 
         status_map = {
             "approved": CheckpointStatus.APPROVED,

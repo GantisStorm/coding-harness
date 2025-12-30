@@ -109,7 +109,13 @@ class CheckpointData:
 
         Returns:
             New CheckpointData instance with fields populated from dict.
+
+        Raises:
+            KeyError: If required 'checkpoint_type' key is missing from data.
+            ValueError: If checkpoint_type value is not a valid CheckpointType.
         """
+        if "checkpoint_type" not in data:
+            raise KeyError("Required key 'checkpoint_type' missing from checkpoint data dict")
         return cls(
             checkpoint_type=CheckpointType(data["checkpoint_type"]),
             status=CheckpointStatus(data.get("status", "pending")),
@@ -174,7 +180,8 @@ class SpecConfig:  # pylint: disable=too-many-instance-attributes
     name: str = ""
     max_iterations: int | None = None
     model: str = ""  # Will be set from env or default in __post_init__
-    code_quality_skill: Path | None = None  # Path to code quality skill preset
+    file_only_mode: bool = False  # If True, use local files instead of GitLab for tracking
+    skip_mr_creation: bool = False  # If True, skip MR creation after coding completes
 
     def __post_init__(self) -> None:
         """
@@ -283,7 +290,8 @@ class SpecConfig:  # pylint: disable=too-many-instance-attributes
             "name": self.name,
             "max_iterations": self.max_iterations,
             "model": self.model,
-            "code_quality_skill": str(self.code_quality_skill) if self.code_quality_skill else None,
+            "file_only_mode": self.file_only_mode,
+            "skip_mr_creation": self.skip_mr_creation,
         }
 
     @classmethod
@@ -299,6 +307,10 @@ class SpecConfig:  # pylint: disable=too-many-instance-attributes
 
         Returns:
             New SpecConfig instance
+
+        Raises:
+            KeyError: If required keys (spec_file, project_dir, target_branch) are missing.
+            ValueError: If paths don't exist or validation fails in __post_init__.
 
         Example:
             >>> # Minimal - spec_slug, spec_hash, and name auto-generated
@@ -333,11 +345,6 @@ class SpecConfig:  # pylint: disable=too-many-instance-attributes
         # Auto-generate name if not provided (use filename stem as fallback)
         name = data.get("name", spec_file.stem)
 
-        # Handle code_quality_skill
-        code_quality_skill = None
-        if data.get("code_quality_skill"):
-            code_quality_skill = Path(data["code_quality_skill"])
-
         return cls(
             spec_file=spec_file,
             project_dir=Path(data["project_dir"]),
@@ -347,5 +354,6 @@ class SpecConfig:  # pylint: disable=too-many-instance-attributes
             name=name,
             max_iterations=data.get("max_iterations"),
             model=data.get("model", os.getenv("CLAUDE_MODEL", "claude-opus-4-5-20251101")),
-            code_quality_skill=code_quality_skill,
+            file_only_mode=data.get("file_only_mode", False),
+            skip_mr_creation=data.get("skip_mr_creation", False),
         )

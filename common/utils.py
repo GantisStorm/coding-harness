@@ -8,6 +8,7 @@ Public API:
     spec_filename_to_slug: Convert spec filename to URL-safe slug
     generate_spec_hash: Generate deterministic hash from spec file content
     validate_required_env_vars: Validate required environment variables
+    ValidationResult: Type alias for validation function return type
 """
 
 import hashlib
@@ -17,7 +18,7 @@ from pathlib import Path
 
 # Type alias for validation result: (success: bool, error_message: str)
 # On success: (True, ""), on failure: (False, "error description")
-ValidationResult = tuple[bool, str]
+type ValidationResult = tuple[bool, str]
 
 
 def spec_filename_to_slug(spec_file: Path) -> str:

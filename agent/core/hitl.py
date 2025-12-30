@@ -49,11 +49,10 @@ def load_pending_checkpoint(project_dir: Path, spec_slug: str, spec_hash: str) -
     log_data = _load_checkpoint_log(project_dir, spec_slug, spec_hash)
 
     # Search all issues for pending checkpoints
-    all_checkpoints = []
-    for checkpoints in log_data.values():
-        for ckpt_dict in checkpoints:
-            if not ckpt_dict.get("completed", False):
-                all_checkpoints.append(ckpt_dict)
+    all_checkpoints = _collect_checkpoints(
+        log_data,
+        lambda ckpt: not ckpt.get("completed", False),
+    )
 
     if not all_checkpoints:
         return None
@@ -101,11 +100,10 @@ def get_latest_checkpoint_by_type(
     log_data = _load_checkpoint_log(project_dir, spec_slug, spec_hash)
 
     # Collect all checkpoints of the specified type
-    matching_checkpoints: list[dict] = []
-    for checkpoints in log_data.values():
-        for ckpt_dict in checkpoints:
-            if ckpt_dict.get("checkpoint_type") == checkpoint_type.value:
-                matching_checkpoints.append(ckpt_dict)
+    matching_checkpoints = _collect_checkpoints(
+        log_data,
+        lambda ckpt: ckpt.get("checkpoint_type") == checkpoint_type.value,
+    )
 
     if not matching_checkpoints:
         return None
@@ -268,6 +266,22 @@ def _get_hitl_log_path(project_dir: Path, spec_slug: str, spec_hash: str) -> Pat
     return state_dir / HITL_LOG_FILE
 
 
+def _collect_checkpoints(
+    log_data: dict[str, list[dict]],
+    predicate: Callable[[dict], bool],
+) -> list[dict]:
+    """Collect checkpoints matching a predicate.
+
+    Args:
+        log_data: Checkpoint log dictionary
+        predicate: Function that returns True for checkpoints to include
+
+    Returns:
+        List of matching checkpoint dicts
+    """
+    return [ckpt_dict for checkpoints in log_data.values() for ckpt_dict in checkpoints if predicate(ckpt_dict)]
+
+
 def _load_checkpoint_log(project_dir: Path, spec_slug: str, spec_hash: str) -> dict[str, list[dict]]:
     """Load the entire checkpoint log.
 
@@ -285,7 +299,10 @@ def _load_checkpoint_log(project_dir: Path, spec_slug: str, spec_hash: str) -> d
             if not isinstance(data, dict):
                 return {}
             return data
-    except (json.JSONDecodeError, KeyError, ValueError):
+    except (json.JSONDecodeError, KeyError, ValueError) as e:
+        # Silently return empty dict to handle corrupted/malformed files gracefully
+        # Uncomment for debugging: import logging; logging.debug(f"Failed to load checkpoint log: {e}")
+        _ = e  # Acknowledge exception variable to satisfy linters
         return {}
 
 

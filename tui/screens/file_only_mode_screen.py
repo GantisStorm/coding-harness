@@ -1,0 +1,118 @@
+"""
+Agent Options Screen
+====================
+
+Screen for selecting agent behavior options:
+- File-only mode for milestone/issue tracking
+- Skip MR creation after coding completes
+"""
+
+from textual.app import ComposeResult
+from textual.containers import Horizontal, Vertical
+from textual.css.query import NoMatches
+from textual.screen import Screen
+from textual.widgets import Button, Checkbox, Static
+
+from ..events import FileOnlyModeSelected
+
+
+class FileOnlyModeScreen(Screen):
+    """Screen for selecting agent behavior options.
+
+    Allows the user to configure:
+    - File-only mode: Use local JSON files instead of GitLab for tracking
+    - Skip MR creation: Stop after coding without creating a merge request
+    """
+
+    DEFAULT_CSS = """
+    FileOnlyModeScreen {
+        align: center middle;
+    }
+
+    FileOnlyModeScreen > Vertical {
+        width: 65%;
+        height: auto;
+        background: $surface;
+        border: tall $primary;
+        padding: 2 4;
+    }
+
+    FileOnlyModeScreen .title {
+        text-align: center;
+        text-style: bold;
+        margin-bottom: 2;
+    }
+
+    FileOnlyModeScreen .section-title {
+        text-style: bold;
+        margin-top: 1;
+        margin-bottom: 0;
+    }
+
+    FileOnlyModeScreen .description {
+        color: $text-muted;
+        margin-bottom: 1;
+    }
+
+    FileOnlyModeScreen Checkbox {
+        margin: 1 0;
+    }
+
+    FileOnlyModeScreen Horizontal {
+        height: auto;
+        align: center middle;
+        margin-top: 2;
+    }
+
+    FileOnlyModeScreen Button {
+        margin: 0 1;
+        min-width: 16;
+    }
+    """
+
+    BINDINGS = [
+        ("enter", "continue", "Continue"),
+        ("escape", "continue", "Continue"),
+    ]
+
+    def compose(self) -> ComposeResult:
+        """Compose the agent options screen."""
+        with Vertical():
+            yield Static("Agent Options", classes="title")
+
+            yield Static("Issue Tracking", classes="section-title")
+            yield Static(
+                "Use local files instead of GitLab for milestone/issue tracking",
+                classes="description",
+            )
+            yield Checkbox("Enable file-only mode", id="file-only-checkbox")
+
+            yield Static("MR Creation", classes="section-title")
+            yield Static(
+                "Skip merge request creation after coding completes",
+                classes="description",
+            )
+            yield Checkbox("Skip MR creation (keep changes on branch)", id="skip-mr-checkbox")
+
+            with Horizontal():
+                yield Button("Continue", id="btn-continue", variant="primary")
+
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle button press events."""
+        if event.button.id == "btn-continue":
+            self._post_selection()
+
+    def action_continue(self) -> None:
+        """Quick action to continue with current selections."""
+        self._post_selection()
+
+    def _post_selection(self) -> None:
+        """Post the selection message with current checkbox values."""
+        try:
+            file_only = self.query_one("#file-only-checkbox", Checkbox).value
+            skip_mr = self.query_one("#skip-mr-checkbox", Checkbox).value
+            self.post_message(FileOnlyModeSelected(file_only_mode=file_only, skip_mr_creation=skip_mr))
+            self.dismiss()
+        except NoMatches:
+            # Should not happen in normal operation, but handle gracefully
+            self.notify("Error: Required checkbox not found", severity="error")

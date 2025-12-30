@@ -1,3 +1,11 @@
+<!-- FILE-ONLY MODE VERSION -->
+<!-- This is the file-only mode version of mr_creation_prompt.md -->
+<!-- Instead of GitLab MCP calls, this version reads/writes local JSON files: -->
+<!--   - .file_milestone.json instead of .gitlab_milestone.json -->
+<!--   - .file_issues.json for issue data (instead of GitLab API) -->
+<!--   - .file_merge_request.json for MR output (instead of GitLab API) -->
+<!--   - .issue_comments/{iid}.json for issue comments (instead of GitLab notes API) -->
+
 ## YOUR ROLE - MERGE REQUEST CREATION AGENT
 
 You are responsible for creating a merge request after all milestone issues have been completed.
@@ -21,9 +29,9 @@ This prompt uses the following template variables that are substituted at runtim
 | Variable | Primary Source | Fallback |
 |----------|---------------|----------|
 | `{{SPEC_SLUG}}` | Template substitution at runtime | `.workspace_info.json` |
-| `{{TARGET_BRANCH}}` | Template substitution at runtime | `.gitlab_milestone.json` |
+| `{{TARGET_BRANCH}}` | Template substitution at runtime | `.file_milestone.json` |
 
-**Rule:** Always prefer values from state files (`.workspace_info.json`, `.gitlab_milestone.json`) over template variables when both are available. State files reflect actual runtime configuration.
+**Rule:** Always prefer values from state files (`.workspace_info.json`, `.file_milestone.json`) over template variables when both are available. State files reflect actual runtime configuration.
 
 ---
 
@@ -34,7 +42,12 @@ The `.claude-agent/` directory is your **local working directory**. It was creat
 ```
 .claude-agent/{{SPEC_SLUG}}/
 ├── .workspace_info.json      # Branch config, spec_hash
-├── .gitlab_milestone.json    # Milestone ID, project ID, issue count
+├── .file_milestone.json      # Milestone ID, project ID, issue count (local file operations)
+├── .file_issues.json         # All issues data (local file instead of GitLab API)
+├── .file_merge_request.json  # MR output (local file instead of GitLab API)
+├── .issue_comments/          # Issue comments directory (instead of GitLab notes API)
+│   ├── {iid}.json            # Comments for issue with given IID
+│   └── ...
 ├── .hitl_checkpoint_log.json # All checkpoint history with decisions
 └── app_spec.txt              # Original specification
 ```
@@ -43,13 +56,16 @@ The `.claude-agent/` directory is your **local working directory**. It was creat
 1. **LOCAL ONLY** - These files are NEVER pushed to GitLab
 2. **Read/Write directly** - Use Read, Write, Edit tools (not git)
 3. **Never include in commits** - Do NOT add to `mcp__gitlab__push_files`
-4. **Update locally only** - At MR completion, update `.gitlab_milestone.json` locally
+4. **Update locally only** - At MR completion, update `.file_milestone.json` locally
 
 **File purposes for MR creation:**
 | File | Purpose | Your action |
 |------|---------|-------------|
 | `.workspace_info.json` | Get `feature_branch` name | Read at start |
-| `.gitlab_milestone.json` | Get milestone/project IDs | Read for MR creation, update at completion |
+| `.file_milestone.json` | Get milestone/project IDs | Read for MR creation, update at completion |
+| `.file_issues.json` | Get all issues data | Read to verify issues closed and gather MR content |
+| `.file_merge_request.json` | Store MR output | Write when MR is created |
+| `.issue_comments/{iid}.json` | Get issue comments | Read for each issue's comments |
 | `.hitl_checkpoint_log.json` | Checkpoint state | Check for pending, create MR checkpoint |
 | `app_spec.txt` | Spec title for MR | Read for MR title/description |
 
@@ -336,7 +352,7 @@ After loading the checkpoint using Operation 3 (Load a Pending Checkpoint), chec
    - `mr_description` - Full MR description
    - `source_branch` - Feature branch
    - `target_branch` - Target branch for merge
-   - `project_id` - GitLab project ID
+   - `project_id` - Project ID
    - `issues_to_close` - List of issues
 
 4. **If `status: "modified"`, check `checkpoint["modifications"]`** for updated title/description:
@@ -394,7 +410,7 @@ After loading the checkpoint using Operation 3 (Load a Pending Checkpoint), chec
 Start by reading the workspace and milestone state files:
 
 1. Read `.claude-agent/{{SPEC_SLUG}}/.workspace_info.json` for workspace config
-2. Read `.claude-agent/{{SPEC_SLUG}}/.gitlab_milestone.json` for GitLab milestone state
+2. Read `.claude-agent/{{SPEC_SLUG}}/.file_milestone.json` for milestone state (local file operations)
 3. Run `git status` to check git status
 4. Run `git branch` to see current branch
 
@@ -403,12 +419,12 @@ Start by reading the workspace and milestone state files:
 | Error | Action |
 |-------|--------|
 | `.workspace_info.json` missing | **STOP** - Report: "Workspace not initialized. Run initializer first." |
-| `.gitlab_milestone.json` missing | **STOP** - Report: "Milestone state missing. Ensure issues were created." |
+| `.file_milestone.json` missing | **STOP** - Report: "Milestone state missing. Ensure issues were created." |
 | File contains invalid JSON | **STOP** - Report: "Corrupted state file: [filename]. Re-run initializer." |
 | Required field missing | **STOP** - Report: "Missing field '[field]' in [filename]." |
 
 **Required fields for `.workspace_info.json`:** `spec_slug`, `spec_hash`, `feature_branch`, `target_branch`
-**Required fields for `.gitlab_milestone.json`:** `project_id`, `milestone_id`, `feature_branch`, `all_issues_closed`
+**Required fields for `.file_milestone.json`:** `project_id`, `milestone_id`, `feature_branch`, `all_issues_closed`
 
 **Validation process:**
 After reading each JSON file with the Read tool, verify that all required fields are present. If any field is missing, report the error and stop.
@@ -418,13 +434,18 @@ After reading each JSON file with the Read tool, verify that all required fields
 .claude-agent/{{SPEC_SLUG}}/    # Example: .claude-agent/user-auth-a3f9c/
 ├── .workspace_info.json       # Target branch, feature branch name
 ├── app_spec.txt               # Original spec
-├── .gitlab_milestone.json     # Milestone state
+├── .file_milestone.json       # Milestone state (local file operations)
+├── .file_issues.json          # All issues data (local file instead of GitLab API)
+├── .file_merge_request.json   # MR output (local file instead of GitLab API)
+├── .issue_comments/           # Issue comments (local files instead of GitLab notes API)
+│   ├── {iid}.json             # Comments for each issue
+│   └── ...
 └── .hitl_checkpoint_log.json  # HITL checkpoint history (persistent log)
 ```
 
-**Verify that `.claude-agent/{{SPEC_SLUG}}/.gitlab_milestone.json` contains:**
+**Verify that `.claude-agent/{{SPEC_SLUG}}/.file_milestone.json` contains:**
 - `all_issues_closed: true` - This is your trigger to proceed
-- `project_id` - GitLab project ID
+- `project_id` - Project ID
 - `milestone_id` - Current milestone ID
 - `milestone_title` - Milestone name
 - `feature_branch` - Git branch for this milestone
@@ -438,15 +459,15 @@ After reading each JSON file with the Read tool, verify that all required fields
 
 ## STEP 2: VERIFY ALL ISSUES CLOSED (AND PROPERLY APPROVED)
 
-Double-check with GitLab that all milestone issues are actually closed.
+Double-check with the local issues file that all milestone issues are actually closed.
 
 ### 2.1: Check for Open Issues
 
-Use `mcp__gitlab__get_milestone_issue` with:
-- `project_id` from `.gitlab_milestone.json`
-- `milestone_id` from `.gitlab_milestone.json`
+Read `.claude-agent/{{SPEC_SLUG}}/.file_issues.json` using the Read tool.
+
+Filter for issues where:
+- `milestone_id` matches the current milestone
 - `state`: "opened"
-- `per_page`: 10
 
 **Expected result:** ZERO open issues
 
@@ -458,7 +479,7 @@ If both open and closed queries return empty:
 
 **If there are ANY open issues:**
 - STOP - Do not proceed with MR creation
-- Update `.claude-agent/{{SPEC_SLUG}}/.gitlab_milestone.json` locally to set `all_issues_closed: false`
+- Update `.claude-agent/{{SPEC_SLUG}}/.file_milestone.json` locally to set `all_issues_closed: false`
   (Use Write tool - this is a local file, NEVER pushed to GitLab)
 - Return to the coding workflow
 
@@ -466,12 +487,10 @@ If both open and closed queries return empty:
 
 Also check for issues that may have been improperly left in-progress:
 
-Use `mcp__gitlab__get_milestone_issue` with:
-- `project_id` from `.gitlab_milestone.json`
-- `milestone_id` from `.gitlab_milestone.json`
+Read `.claude-agent/{{SPEC_SLUG}}/.file_issues.json` and filter for:
+- `milestone_id` matches the current milestone
 - `state`: "opened"
-- `labels`: "in-progress"
-- `per_page`: 10
+- `labels` contains "in-progress"
 
 **Expected result:** ZERO in-progress issues
 
@@ -489,7 +508,7 @@ Use the Read tool to load `.claude-agent/{spec_slug}-{spec_hash}/.hitl_checkpoin
 
 **For each closed issue, verify there's an approved `issue_closure` checkpoint:**
 
-1. Get the list of closed issue IIDs from the GitLab query results
+1. Get the list of closed issue IIDs from the `.file_issues.json` file
 2. For each closed issue IID:
    - Check if the issue IID exists as a key in the checkpoint log
    - If not, log a warning: "Issue #[IID] has no checkpoint history"
@@ -545,7 +564,7 @@ Make sure the feature branch is up to date and ready for merge.
    | Conflict Type | Resolution |
    |---------------|------------|
    | Lock files (`package-lock.json`, `yarn.lock`, `Pipfile.lock`) | Accept OURS, then regenerate with package manager |
-   | State files (`.gitlab_milestone.json`, `.workspace_info.json`) | Accept THEIRS, then re-apply our state updates |
+   | State files (`.file_milestone.json`, `.workspace_info.json`) | Accept THEIRS, then re-apply our state updates |
    | Generated files (`*.min.js`, `*.css.map`, `dist/*`) | Accept OURS (will regenerate on build) |
    | Source code (`.py`, `.js`, `.ts`, etc.) | **STOP and escalate to human** |
    | Config files that change behavior | **STOP and escalate to human** |
@@ -573,7 +592,7 @@ Make sure the feature branch is up to date and ready for merge.
    - Push via MCP:
    ```
    mcp__gitlab__push_files(
-     project_id: [from .gitlab_milestone.json],
+     project_id: [from .file_milestone.json],
      branch: "feature/{{SPEC_SLUG}}",
      commit_message: "chore(milestone): Merge {{TARGET_BRANCH}} into feature branch
 
@@ -591,7 +610,7 @@ Milestone: [milestone_title]",
    - Verify push succeeded:
    ```
    mcp__gitlab__list_commits(
-     project_id: [from .gitlab_milestone.json],
+     project_id: [from .file_milestone.json],
      ref_name: "feature/{{SPEC_SLUG}}",
      per_page: 1
    )
@@ -650,7 +669,7 @@ If there are uncommitted changes from auto-fix, push ONLY those files via MCP:
 3. Push via MCP:
    ```
    mcp__gitlab__push_files(
-     project_id: [from .gitlab_milestone.json],
+     project_id: [from .file_milestone.json],
      branch: [current feature branch],
      commit_message: "style(milestone): Apply code quality auto-fixes
 
@@ -668,7 +687,7 @@ Milestone: [milestone_title]",
 4. Verify push succeeded:
    ```
    mcp__gitlab__list_commits(
-     project_id: [from .gitlab_milestone.json],
+     project_id: [from .file_milestone.json],
      ref_name: [current feature branch],
      per_page: 1
    )
@@ -679,10 +698,8 @@ Milestone: [milestone_title]",
 
 **Test ALL completed features in the milestone, not just 1-2.**
 
-1. Query all closed issues in the milestone:
-   ```
-   mcp__gitlab__get_milestone_issue(project_id, milestone_id, state="closed", per_page=20)
-   ```
+1. Read all closed issues from `.claude-agent/{{SPEC_SLUG}}/.file_issues.json`:
+   - Filter for issues with `state`: "closed" and matching `milestone_id`
 
 2. For each closed issue, verify the feature still works:
    - Navigate to the feature in browser
@@ -753,18 +770,16 @@ Before proceeding to STEP 4, verify ALL of the following:
 
 Gather information from the milestone to create a comprehensive MR description.
 
-Use `mcp__gitlab__get_milestone_issue` with:
-- `project_id` from `.gitlab_milestone.json`
-- `milestone_id` from `.gitlab_milestone.json`
+Read `.claude-agent/{{SPEC_SLUG}}/.file_issues.json` using the Read tool and filter for:
+- `milestone_id` matches the current milestone
 - `state`: "closed"
-- `per_page`: 20 (you may need multiple queries if there are many issues)
 
 **Pagination for many issues:**
-If milestone has > 20 issues, query in pages:
-1. Start with page 1
-2. Call `mcp__gitlab__get_milestone_issue` with `per_page: 20` and `page: [current page]`
-3. If results are returned, collect them and increment page number
-4. Repeat until no more results or page > 5 (safety limit: max 100 issues)
+If milestone has > 20 issues, process in batches:
+1. Read all issues from `.file_issues.json`
+2. Filter for closed issues in this milestone
+3. Process in groups of 20 for organization
+4. Safety limit: max 100 issues
 
 **Collect from each closed issue:**
 
@@ -777,7 +792,7 @@ If milestone has > 20 issues, query in pages:
    - Look for "## Acceptance Criteria" (what was verified)
    - If no enrichment sections, use the basic description
 
-3. **Issue comments** - Use `mcp__gitlab__list_issue_notes` for each issue:
+3. **Issue comments** - Read `.claude-agent/{{SPEC_SLUG}}/.issue_comments/{iid}.json` for each issue:
    - Look for "## Research Documentation" (from initializer enrichment)
    - Look for "## Session Ended" / "## Session Started" (implementation notes)
    - Look for "## Progress Update" (mid-implementation notes)
@@ -848,7 +863,7 @@ valuable context that should be summarized in the MR.
 ```
 
 **Important:**
-- Use "Closes #[issue_iid]" format for each issue - GitLab will auto-link and close them
+- Use "Closes #[issue_iid]" format for each issue - this will be recorded in the MR file
 - Be thorough - this is the permanent record of the milestone's work
 - Extract valuable context from enrichment and session comments
 - The MR description should tell the complete story of the milestone
@@ -867,7 +882,7 @@ Before creating the merge request, you MUST get human approval.
    - Read `.claude-agent/{{SPEC_SLUG}}/.workspace_info.json` using the Read tool
    - Extract `spec_hash` from the JSON
    - If file doesn't exist, use fallback: find directories starting with `{{SPEC_SLUG}}-` and extract the hash suffix
-2. Load milestone state from `.claude-agent/{{SPEC_SLUG}}/.gitlab_milestone.json` using the Read tool
+2. Load milestone state from `.claude-agent/{{SPEC_SLUG}}/.file_milestone.json` using the Read tool
 3. Prepare issues_to_close list from Step 4 (all closed issues from milestone)
 4. Create the checkpoint:
    - Read the existing checkpoint log (or start with empty `{}` if not exists)
@@ -895,7 +910,7 @@ WHAT HAPPENED:
   - All milestone issues implemented and closed
   - Final regression tests passed
   - MR title and description drafted
-  - Human reviews before MR is created in GitLab
+  - Human reviews before MR file is created
 
 MERGE REQUEST DETAILS:
   Title: [mr_title]
@@ -923,7 +938,7 @@ REVIEW CHECKLIST:
 
 +-------------------------------------------------------------+
 |  IF APPROVED:                                               |
-|    - Create merge request in GitLab                         |
+|    - Create merge request file locally                      |
 |    - Link all closed issues to MR                           |
 |    - Mark milestone as complete                             |
 |                                                             |
@@ -977,45 +992,50 @@ REVIEW CHECKLIST:
 
 **CRITICAL:** Verification must pass before marking complete. See "MR Verification Loop" below.
 
-Use `mcp__gitlab__create_merge_request` with:
-- `project_id` from `.gitlab_milestone.json`
-- `source_branch`: feature branch from `.gitlab_milestone.json`
-- `target_branch`: target branch from `.gitlab_milestone.json` (default: main)
+Write the merge request to `.claude-agent/{{SPEC_SLUG}}/.file_merge_request.json` with:
+- `project_id` from `.file_milestone.json`
+- `source_branch`: feature branch from `.file_milestone.json`
+- `target_branch`: target branch from `.file_milestone.json` (default: main)
 - `title`: approved title (from checkpoint or modifications)
 - `description`: approved description (from checkpoint or modifications)
-- `milestone_id`: milestone ID from `.gitlab_milestone.json`
+- `milestone_id`: milestone ID from `.file_milestone.json`
 - `remove_source_branch`: true (optional, cleans up after merge)
 
 **Example:**
-```
-mcp__gitlab__create_merge_request(
-  project_id: 12345,
-  source_branch: "milestone-user-authentication",
-  target_branch: "main",
-  title: "User Authentication and Profile Management",
-  description: "[Human-approved description]",
-  milestone_id: 42,
-  remove_source_branch: true
-)
+```json
+{
+  "iid": 1,
+  "project_id": 12345,
+  "source_branch": "milestone-user-authentication",
+  "target_branch": "main",
+  "title": "User Authentication and Profile Management",
+  "description": "[Human-approved description]",
+  "milestone_id": 42,
+  "remove_source_branch": true,
+  "state": "opened",
+  "created_at": "[ISO 8601 timestamp]",
+  "web_url": "file://.claude-agent/{{SPEC_SLUG}}/.file_merge_request.json"
+}
 ```
 
 **Capture the response:**
-- The MR will return an `iid` (MR number) and `web_url` (full URL to MR)
+- The MR will have an `iid` (MR number) and `web_url` (file path reference)
 - Save these for the state file update
 
 **Validate MR creation response:**
 
-After calling `mcp__gitlab__create_merge_request`, check the response:
-- Verify the response contains `iid` (MR number) and `web_url` fields
+After writing `.file_merge_request.json`, verify the file:
+- Read the file back using the Read tool
+- Verify the file contains `iid` (MR number) and `web_url` fields
 - If either is missing, report: "ERROR: MR creation failed or returned incomplete data"
 - Do not mark checkpoint as complete if validation fails
 
 **MR Verification Loop (Mandatory - MAX 3 retry attempts):**
 
-After creating the MR, verify it actually exists on GitLab:
+After creating the MR, verify it actually exists:
 
-1. Call `mcp__gitlab__get_merge_request` with the project_id and mr_iid from the creation response
-2. Check that the returned MR object has the expected `iid`
+1. Read `.claude-agent/{{SPEC_SLUG}}/.file_merge_request.json` using the Read tool
+2. Check that the file contains the expected `iid`
 3. If verification fails, wait 2 seconds and retry (up to 3 attempts total)
 4. If all attempts fail:
    - Report: "ERROR: MR creation could not be verified after 3 attempts"
@@ -1029,12 +1049,12 @@ After creating the MR, verify it actually exists on GitLab:
 
 | Check | Required | Action if Fail |
 |-------|----------|----------------|
-| Response contains `iid` | Yes | Retry MR creation |
-| Response contains `web_url` | Yes | Retry MR creation |
-| MR verified on GitLab | Yes | Retry or report error |
+| File contains `iid` | Yes | Retry MR creation |
+| File contains `web_url` | Yes | Retry MR creation |
+| MR file verified | Yes | Retry or report error |
 | MR state is "opened" | Yes | Investigate and report |
 
-**GUARDRAIL:** Do NOT mark checkpoint as complete until MR is verified to exist on GitLab.
+**GUARDRAIL:** Do NOT mark checkpoint as complete until MR file is verified to exist.
 
 **After creating and verifying the MR, mark checkpoint as complete:**
 
@@ -1049,7 +1069,7 @@ Use Operation 2 (Complete a Checkpoint) from the CHECKPOINT OPERATIONS section:
 
 ## STEP 6: UPDATE STATE FILE
 
-Update `.claude-agent/{{SPEC_SLUG}}/.gitlab_milestone.json` with completion information:
+Update `.claude-agent/{{SPEC_SLUG}}/.file_milestone.json` with completion information:
 
 Add the following fields:
 ```json
@@ -1063,7 +1083,7 @@ Add the following fields:
   "completed_at": "[ISO 8601 timestamp, e.g., 2025-12-21T10:30:00Z]",
   "milestone_closed": true,
   "merge_request_iid": [MR number from Step 5],
-  "merge_request_url": "[Full URL to MR from Step 5]",
+  "merge_request_url": "[File path to MR from Step 5]",
   "notes": "Milestone completed, MR created and ready for review"
 }
 ```
@@ -1072,7 +1092,7 @@ Add the following fields:
 Run `date -u +"%Y-%m-%dT%H:%M:%SZ"` to generate ISO 8601 timestamp
 
 **Update the file:**
-- Read the current `.claude-agent/{{SPEC_SLUG}}/.gitlab_milestone.json` using the Read tool
+- Read the current `.claude-agent/{{SPEC_SLUG}}/.file_milestone.json` using the Read tool
 - Add the new fields to the existing JSON
 - Write the updated JSON using the Write tool
 
@@ -1086,7 +1106,7 @@ Run `date -u +"%Y-%m-%dT%H:%M:%SZ"` to generate ISO 8601 timestamp
 >
 > **Do NOT push `.claude-agent/` files via `mcp__gitlab__push_files`.**
 > The state file update above is saved locally only. The MR and milestone changes
-> are already committed on GitLab via the MR creation in Step 5.
+> are tracked in the local `.file_merge_request.json` file.
 
 ---
 
@@ -1105,7 +1125,7 @@ Target Branch: [target_branch]
 
 MERGE REQUEST CREATED:
 - MR #[merge_request_iid]
-- URL: [merge_request_url]
+- File: [merge_request_url]
 - Status: Open and ready for review
 
 ISSUES COMPLETED: [count]
@@ -1125,7 +1145,7 @@ NEXT STEPS (for human reviewer):
 ```
 
 **Include:**
-- Merge request URL prominently
+- Merge request file path prominently
 - Count of issues completed
 - List of all issues
 - Clear next steps for human reviewer
@@ -1143,16 +1163,16 @@ We use GitLab MCP tools for ALL push operations to avoid git credential/authenti
 - The milestone is closed and locked
 
 **If the MR is rejected or changes are requested:**
-- The reviewer can add comments on the MR
+- The reviewer can update the `.file_merge_request.json` file
 - New commits can be pushed to the feature branch
-- The MR will automatically update
+- The MR file can be updated manually
 - DO NOT create a new MR - use the existing one
 
 **State files are LOCAL ONLY:**
 - `.claude-agent/` files are local working files for the agent
 - They are NEVER pushed to GitLab - do NOT include them in `mcp__gitlab__push_files`
 - The agent reads/writes them directly via filesystem tools (Read/Write)
-- For audit trail, use GitLab milestone and MR descriptions (which are permanent)
+- For audit trail, use the `.file_merge_request.json` file and MR descriptions (which are permanent)
 
 **Quality checklist before creating MR:**
 - [ ] All milestone issues are closed
@@ -1160,38 +1180,35 @@ We use GitLab MCP tools for ALL push operations to avoid git credential/authenti
 - [ ] No merge conflicts with target branch
 - [ ] Application is in working state
 - [ ] All CODE changes pushed via `mcp__gitlab__push_files` (NOT `.claude-agent/` files)
-- [ ] Local state file updated (`.gitlab_milestone.json`)
+- [ ] Local state file updated (`.file_milestone.json`)
 - [ ] MR description is comprehensive
 
 ---
 
-## GITLAB API TOOLS
+## LOCAL FILE OPERATIONS
 
-**GitLab MCP Call Timeouts:**
+**Local File Operation Timeouts:**
 | Operation Type | Expected Time | Timeout Action |
 |----------------|---------------|----------------|
-| Read operations (get issue, list commits) | < 10 seconds | Retry once after 5s wait |
-| Write operations (create MR, push files) | < 30 seconds | Retry once after 10s wait |
-| Large queries (100+ issues) | < 60 seconds | Paginate instead of single query |
-| After 2 timeouts on same operation | N/A | **STOP** and report API issue |
+| Read operations (read issue, read comments) | < 1 second | Retry once after 1s wait |
+| Write operations (write MR file, update milestone) | < 1 second | Retry once after 1s wait |
+| After 2 timeouts on same operation | N/A | **STOP** and report file system issue |
 
-**Key tools for MR creation workflow:**
+**Key files for MR creation workflow:**
 
-1. **`mcp__gitlab__get_milestone_issue`** - Query milestone issues
+1. **`.file_issues.json`** - Read milestone issues
    - Used to verify all issues closed and gather MR description content
+   - Structure: Array of issue objects with `iid`, `title`, `description`, `state`, `labels`, `milestone_id`
 
-2. **`mcp__gitlab__create_merge_request`** - Create the MR
-   - Required params: `project_id`, `source_branch`, `target_branch`, `title`
-   - Optional: `description`, `remove_source_branch`
+2. **`.file_merge_request.json`** - Write the MR
+   - Created when MR is approved
+   - Structure: `{"iid": N, "project_id": N, "source_branch": "...", "target_branch": "...", "title": "...", "description": "...", "state": "opened", "web_url": "..."}`
 
-3. **`mcp__gitlab__get_merge_request`** - Get MR details (for verification)
-   - Required params: `project_id`, `mr_iid`
-   - Returns: MR object with `iid`, `state`, `web_url`, etc.
+3. **`.issue_comments/{iid}.json`** - Read issue comments
+   - Used to gather implementation notes for MR description
+   - Structure: Array of comment objects with `id`, `body`, `created_at`, `author`
 
-4. **`mcp__gitlab__edit_milestone`** - Close the milestone
-   - Required params: `project_id`, `milestone_id`, `state_event`
-
-5. **`mcp__gitlab__push_files`** - Push file changes (replaces git add/commit/push)
+4. **`mcp__gitlab__push_files`** - Push file changes (replaces git add/commit/push)
    - Required params: `project_id`, `branch`, `commit_message`, `files`
    - `files` is an array of `{"file_path": "path", "content": "content"}`
    - Used for ALL push operations (merge conflicts, auto-fixes, state files)
@@ -1203,7 +1220,7 @@ We use GitLab MCP tools for ALL push operations to avoid git credential/authenti
    3. Retry with only the failed files
    4. If still fails after 2 retries, **STOP** and report which files couldn't be pushed
 
-6. **`mcp__gitlab__list_commits`** - Verify push succeeded
+5. **`mcp__gitlab__list_commits`** - Verify push succeeded
    - Required params: `project_id`, `ref_name`
    - Optional: `per_page` (use 1 to get latest commit)
    - Used to confirm pushes worked by checking latest commit message
@@ -1227,22 +1244,22 @@ Local git commands are only used for read operations:
 ## ERROR HANDLING
 
 **If MR creation fails:**
-1. Check error message from GitLab API
+1. Check error message from file operation
 2. **Agent-fixable issues (retry up to 2 times):**
 
    | Issue | How to Fix |
    |-------|------------|
    | Merge conflicts | Go back to Step 3, resolve conflicts per resolution rules |
-   | Source branch doesn't exist | Verify branch name matches `.gitlab_milestone.json` |
+   | Source branch doesn't exist | Verify branch name matches `.file_milestone.json` |
    | Stale data | Re-read workspace files, verify branch names |
 
 3. **Human-required issues (STOP and escalate):**
 
    | Issue | Action |
    |-------|--------|
-   | 401/403 Permission errors | **STOP** - Report: "Permission denied. Token may lack required scope." |
+   | File permission errors | **STOP** - Report: "Permission denied on file write." |
    | Target branch doesn't exist | **STOP** - Report: "Target branch '[name]' not found." |
-   | Unknown API errors | **STOP** after 2 retries - Report full error message |
+   | Unknown file errors | **STOP** after 2 retries - Report full error message |
 
 4. Retry MR creation (max 2 attempts total, then STOP and escalate)
 
@@ -1260,7 +1277,7 @@ When escalation is needed:
 4. The MR is still valid even if milestone close fails
 
 **If state file update fails:**
-1. The MR and milestone changes are already committed on GitLab
+1. The MR file has already been created
 2. The state file (`.claude-agent/...`) is LOCAL ONLY - it's not pushed to GitLab
 3. Manually fix using Write tool - this is just a local file for agent state
 4. If Write tool fails, check file permissions on the local filesystem
@@ -1288,7 +1305,7 @@ The following exit codes are used in checkpoint handling:
 | Code | Meaning | When to Use |
 |------|---------|-------------|
 | 0 | Success - workflow completed normally | MR created and verified |
-| 1 | Error - operation failed, intervention required | API failures, permission errors |
+| 1 | Error - operation failed, intervention required | File operation failures, permission errors |
 | 2 | Waiting - blocked pending external action | Checkpoint pending human approval |
 
 **IMPORTANT:** Use exit(2) for "pending" states to distinguish from true success. This allows the harness to detect pending vs completed states.

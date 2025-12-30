@@ -34,6 +34,15 @@ class DaemonClient:
         self._writer: asyncio.StreamWriter | None = None
         self._lock = asyncio.Lock()
 
+    async def __aenter__(self) -> DaemonClient:
+        """Enter async context manager."""
+        await self.connect()
+        return self
+
+    async def __aexit__(self, exc_type: type | None, exc_val: BaseException | None, exc_tb: object) -> None:
+        """Exit async context manager."""
+        await self.disconnect()
+
     async def connect(self) -> None:
         """Connect to the daemon."""
         if not SOCKET_PATH.exists():
@@ -66,8 +75,12 @@ class DaemonClient:
                 self._writer.write(json.dumps(command).encode() + b"\n")
                 await self._writer.drain()
 
-                # Read response
-                data = await self._reader.readline()
+                # Read response with timeout to prevent indefinite blocking
+                try:
+                    data = await asyncio.wait_for(self._reader.readline(), timeout=30.0)
+                except TimeoutError:
+                    await self.disconnect()
+                    raise DaemonError("Daemon response timeout") from None
                 if not data:
                     raise DaemonError("Daemon closed connection")
 
@@ -105,7 +118,12 @@ class DaemonClient:
         return response
 
     async def ping(self) -> bool:
-        """Check if daemon is running."""
+        """Check if daemon is running.
+
+        Note: This method is available for external use but currently has no
+        consumers in the codebase. Consider using is_daemon_running() for sync
+        checks or calling list_agents() which implicitly verifies connectivity.
+        """
         try:
             response = await self._send_command({"cmd": "ping"})
             return response.get("status") == "ok"
@@ -172,7 +190,12 @@ class DaemonClient:
         return self._validate_response(response, "Failed to stop agent", "agent")
 
     async def get_agent_status(self, agent_id: str) -> dict[str, Any]:
-        """Get status of a specific agent."""
+        """Get status of a specific agent.
+
+        Note: This method is available for external use but currently has no
+        consumers in the codebase. The TUI uses list_agents() and tracks status
+        via AgentSession objects instead.
+        """
         response = await self._send_command(
             {
                 "cmd": "status",
@@ -192,7 +215,12 @@ class DaemonClient:
         self._validate_response(response, "Failed to remove agent")
 
     async def shutdown_daemon(self) -> None:
-        """Shutdown the daemon."""
+        """Shutdown the daemon.
+
+        Note: This method is available for external use but currently has no
+        consumers in the codebase. The daemon is typically stopped via CLI
+        or by sending SIGTERM directly.
+        """
         with contextlib.suppress(DaemonError):
             await self._send_command({"cmd": "shutdown"})
 

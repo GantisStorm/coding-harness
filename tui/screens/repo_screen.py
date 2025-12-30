@@ -6,6 +6,7 @@ Screen for selecting a repository working directory.
 """
 
 from pathlib import Path
+from typing import ClassVar
 
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical
@@ -22,12 +23,12 @@ class RepoSelectScreen(Screen):
     Validates that the selected directory contains a .git folder.
     """
 
-    BINDINGS = [
+    BINDINGS: ClassVar[list[tuple[str, str, str]]] = [
         ("enter", "select", "Select"),
         ("escape", "cancel", "Cancel"),
     ]
 
-    DEFAULT_CSS = """
+    DEFAULT_CSS: ClassVar[str] = """
     RepoSelectScreen {
         align: center middle;
     }

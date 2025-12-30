@@ -5,6 +5,14 @@ Claude SDK Client Configuration & Security
 Functions for creating and configuring the Claude Agent SDK client.
 Includes security hooks for bash command validation.
 Updated for claude-agent-sdk 0.1.18 with direct options (no settings file).
+
+TODO: Add unit tests for security validation functions. This is a security-critical
+module that validates bash commands before execution. Test coverage should include:
+- _bash_security_hook with allowed and blocked commands
+- _validate_pkill_command with various process names
+- _validate_chmod_command with various modes
+- _validate_script_path with path traversal attempts
+- _validate_script_arguments with injection attempts
 """
 
 from __future__ import annotations
@@ -143,6 +151,39 @@ _ALLOWED_COMMANDS = frozenset(
 # Commands that need additional validation even when in the allowlist
 _COMMANDS_NEEDING_EXTRA_VALIDATION = frozenset({"pkill", "chmod", "init.sh", "start.sh"})
 
+# Security limits for command validation
+_MAX_COMMAND_LENGTH = 10000  # Maximum length for bash commands
+_MAX_SCRIPT_ARGS = 50  # Maximum number of script arguments
+_MAX_ARG_LENGTH = 1000  # Maximum length for individual arguments
+
+# Regex pattern for splitting on semicolons outside quotes
+_SEMICOLON_SPLIT_PATTERN = re.compile(r'(?<!["\'])\s*;\s*(?!["\'])')
+
+# Shell operators that indicate a new command follows
+_SHELL_OPERATORS = frozenset({"|", "||", "&&", "&"})
+
+# Shell keywords that should be skipped when extracting commands
+_SHELL_KEYWORDS = frozenset(
+    {
+        "if",
+        "then",
+        "else",
+        "elif",
+        "fi",
+        "for",
+        "while",
+        "until",
+        "do",
+        "done",
+        "case",
+        "esac",
+        "in",
+        "!",
+        "{",
+        "}",
+    }
+)
+
 
 async def _bash_security_hook(
     input_data: HookInput,
@@ -172,7 +213,7 @@ async def _bash_security_hook(
         return {}
 
     # Validate command doesn't contain null bytes or exceed length limit
-    if "\0" in command or len(command) > 10000:
+    if "\0" in command or len(command) > _MAX_COMMAND_LENGTH:
         return _deny_command("Command contains invalid characters or exceeds length limit")
 
     # Detect command substitutions and subshells
@@ -392,7 +433,7 @@ def _split_command_segments(command_string: str) -> list[str]:
     # echo 'it\'s;done' (escaped quote - may cause incorrect split)
     result = []
     for segment in segments:
-        sub_segments = re.split(r'(?<!["\'])\s*;\s*(?!["\'])', segment)
+        sub_segments = _SEMICOLON_SPLIT_PATTERN.split(segment)
         for sub in sub_segments:
             sub = sub.strip()
             if sub:
@@ -420,16 +461,15 @@ def _extract_commands(command_string: str) -> list[str]:
 
     # Split on semicolons that aren't inside quotes (simple heuristic)
     # This handles common cases like "echo hello; ls"
-    segments = re.split(r'(?<!["\'])\s*;\s*(?!["\'])', command_string)
+    segments = _SEMICOLON_SPLIT_PATTERN.split(command_string)
 
     for segment in segments:
         segment = segment.strip()
         if not segment:
             continue
 
-        try:
-            tokens = shlex.split(segment)
-        except ValueError:
+        tokens, _error = _safe_shlex_split(segment)
+        if tokens is None:
             # Malformed command (unclosed quotes, etc.)
             # Return empty to trigger block (fail-safe)
             return []
@@ -442,29 +482,12 @@ def _extract_commands(command_string: str) -> list[str]:
 
         for token in tokens:
             # Shell operators indicate a new command follows
-            if token in ("|", "||", "&&", "&"):
+            if token in _SHELL_OPERATORS:
                 expect_command = True
                 continue
 
             # Skip shell keywords that precede commands
-            if token in (
-                "if",
-                "then",
-                "else",
-                "elif",
-                "fi",
-                "for",
-                "while",
-                "until",
-                "do",
-                "done",
-                "case",
-                "esac",
-                "in",
-                "!",
-                "{",
-                "}",
-            ):
+            if token in _SHELL_KEYWORDS:
                 continue
 
             # Skip flags/options
@@ -502,10 +525,9 @@ def _validate_pkill_command(command_string: str) -> tuple[bool, str]:
         "next",
     }
 
-    try:
-        tokens = shlex.split(command_string)
-    except ValueError:
-        return False, "Could not parse pkill command"
+    tokens, error = _safe_shlex_split(command_string)
+    if tokens is None:
+        return False, f"Could not parse pkill command: {error}"
 
     if not tokens:
         return False, "Empty pkill command"
@@ -541,10 +563,9 @@ def _validate_chmod_command(command_string: str) -> tuple[bool, str]:
     """
     # pylint: disable=too-many-return-statements
     # Early returns improve readability for validation logic - each return handles a specific failure case
-    try:
-        tokens = shlex.split(command_string)
-    except ValueError:
-        return False, "Could not parse chmod command"
+    tokens, error = _safe_shlex_split(command_string)
+    if tokens is None:
+        return False, f"Could not parse chmod command: {error}"
 
     if not tokens or tokens[0] != "chmod":
         return False, "Not a chmod command"
@@ -594,10 +615,9 @@ def _validate_script_path(
     Returns:
         Tuple of (is_valid, error_message). error_message is empty if valid.
     """
-    try:
-        tokens = shlex.split(command_string)
-    except ValueError as e:
-        return False, f"Invalid {script_name} command syntax: {e}"
+    tokens, error = _safe_shlex_split(command_string)
+    if tokens is None:
+        return False, f"Invalid {script_name} command syntax: {error}"
 
     if not tokens:
         return False, f"Empty {script_name} command"
@@ -647,18 +667,16 @@ def _validate_script_arguments(tokens: list[str]) -> tuple[bool, str]:
     dangerous_chars = {";", "&", "|", "`", "$", "(", ")", "<", ">", "\n", "\r", "\\"}
 
     # Limit total number of arguments to prevent resource exhaustion
-    max_args = 50
-    if len(tokens) - 1 > max_args:
-        return False, f"Script has too many arguments (max {max_args}, got {len(tokens) - 1})"
+    if len(tokens) - 1 > _MAX_SCRIPT_ARGS:
+        return False, f"Script has too many arguments (max {_MAX_SCRIPT_ARGS}, got {len(tokens) - 1})"
 
     # Limit argument length to prevent buffer overflow-style attacks
-    max_arg_length = 1000
 
     # Check all arguments (skip the script name itself)
     for arg in tokens[1:]:
         # Check argument length
-        if len(arg) > max_arg_length:
-            return False, f"Script argument exceeds maximum length ({max_arg_length} chars): {arg[:50]}..."
+        if len(arg) > _MAX_ARG_LENGTH:
+            return False, f"Script argument exceeds maximum length ({_MAX_ARG_LENGTH} chars): {arg[:50]}..."
 
         # Check for dangerous shell metacharacters
         for char in dangerous_chars:
@@ -706,10 +724,9 @@ def _validate_start_script(command_string: str) -> tuple[bool, str]:
         return False, error_msg
 
     # Additional validation: check subcommand if present
-    try:
-        tokens = shlex.split(command_string)
-    except ValueError:
-        return False, "Could not parse start script command"
+    tokens, error = _safe_shlex_split(command_string)
+    if tokens is None:
+        return False, f"Could not parse start script command: {error}"
 
     if len(tokens) > 1:
         subcommand = tokens[1]
@@ -746,6 +763,23 @@ def _deny_command(reason: str) -> HookJSONOutput:
             "permissionDecisionReason": reason,
         }
     }
+
+
+def _safe_shlex_split(command_string: str) -> tuple[list[str] | None, str]:
+    """
+    Safely parse a command string using shlex.
+
+    Args:
+        command_string: The shell command to parse
+
+    Returns:
+        Tuple of (tokens, error_message). tokens is None if parsing failed.
+    """
+    try:
+        tokens = shlex.split(command_string)
+        return tokens, ""
+    except ValueError as e:
+        return None, str(e)
 
 
 def _stderr_filter(msg: str) -> None:

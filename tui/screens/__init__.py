@@ -7,8 +7,8 @@ Modal screens for repository, spec file, and branch selection.
 
 from .branch_screen import BranchSelectScreen
 from .checkpoint_screen import CheckpointReviewScreen
-from .code_quality_screen import CodeQualityScreen
 from .dialogs import AddAnotherSpecDialog, AdvancedOptionsScreen
+from .file_only_mode_screen import FileOnlyModeScreen
 from .log_viewer_screen import LogViewerScreen
 from .repo_screen import RepoSelectScreen
 from .spec_screen import SpecSelectScreen
@@ -18,7 +18,7 @@ __all__ = [
     "AdvancedOptionsScreen",
     "BranchSelectScreen",
     "CheckpointReviewScreen",
-    "CodeQualityScreen",
+    "FileOnlyModeScreen",
     "LogViewerScreen",
     "RepoSelectScreen",
     "SpecSelectScreen",

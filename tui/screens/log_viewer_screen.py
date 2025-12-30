@@ -13,6 +13,8 @@ from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
 from textual.widgets import Button, Static, TextArea
 
+_ERROR_PREFIX = "Error loading log:"
+
 
 class LogViewerScreen(Screen):
     """Full-screen log viewer with text selection and copy support.
@@ -90,6 +92,15 @@ class LogViewerScreen(Screen):
         id: str | None = None,  # pylint: disable=redefined-builtin
         classes: str | None = None,
     ) -> None:
+        """Initialize the log viewer screen.
+
+        Args:
+            log_file: Path to the log file to display
+            agent_name: Name of the agent whose log is being viewed
+            name: Optional widget name
+            id: Optional widget ID
+            classes: Optional CSS classes
+        """
         super().__init__(name=name, id=id, classes=classes)
         self.log_file = log_file
         self.agent_name = agent_name
@@ -122,10 +133,12 @@ class LogViewerScreen(Screen):
         """Load the log file content."""
         try:
             self._content = self.log_file.read_text(encoding="utf-8", errors="replace")
+            if not self._content:
+                self._content = "(Log file is empty)"
         except OSError as e:
-            self._content = f"Error loading log: {e}"
+            self._content = f"{_ERROR_PREFIX} {e}"
         self._text_area.load_text(self._content)
-        if not self._content.startswith("Error"):
+        if not self._content.startswith(_ERROR_PREFIX) and self._content != "(Log file is empty)":
             self._text_area.scroll_end(animate=False)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:

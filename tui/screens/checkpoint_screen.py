@@ -5,6 +5,7 @@ Checkpoint Review Screen
 Screen for reviewing and resolving HITL checkpoints.
 """
 
+from collections.abc import Callable
 from typing import Any
 
 from textual.app import ComposeResult
@@ -19,6 +20,10 @@ from ..events import CheckpointResolved
 # Constants for preview/summary text truncation
 _MAX_SUMMARY_PREVIEW_LENGTH = 200
 _MAX_DESCRIPTION_PREVIEW_LENGTH = 300
+
+# Constants for title display truncation in ranking inputs
+_MAX_TITLE_DISPLAY_LENGTH = 40
+_MAX_TITLE_DISPLAY_LENGTH_COMPACT = 35
 
 
 class CheckpointReviewScreen(Screen):
@@ -201,14 +206,7 @@ class CheckpointReviewScreen(Screen):
                 if action is None:
                     self.notify("Selected action has no ID", severity="error")
                     return
-                self.post_message(
-                    CheckpointResolved(
-                        status="approved",
-                        decision=action,
-                        notes=notes if notes else None,
-                    )
-                )
-                self.dismiss()
+                self._resolve_and_dismiss(status="approved", notes=notes, decision=action)
             else:
                 self.notify("Please select an action", severity="warning")
         except NoMatches as e:
@@ -467,12 +465,7 @@ class CheckpointReviewScreen(Screen):
                 reasoning = judgment.get("reasoning", "")
 
                 # Status indicator with recommended order
-                if decision == "needs_enrichment" and rec_ord:
-                    status = f"[!] #{rec_ord}"
-                elif decision == "needs_enrichment":
-                    status = "[!]"
-                else:
-                    status = "[ok]"
+                status = self._get_enrichment_status_indicator(decision, rec_ord)
                 yield Static(f"#{iid} {status} {title}")
                 yield Static(f"    Confidence: {confidence} | Complexity: {complexity}")
                 if reasoning:
@@ -585,6 +578,47 @@ class CheckpointReviewScreen(Screen):
             ),
         )
 
+    def _get_enrichment_status_indicator(self, decision: str, recommended_order: int | None) -> str:
+        """Get status indicator string for enrichment decision.
+
+        Args:
+            decision: The LLM decision (e.g., "needs_enrichment", "sufficient")
+            recommended_order: The LLM's recommended order number, if any
+
+        Returns:
+            Status indicator string like "[!] LLM #1", "[!] LLM", or "[ok]"
+        """
+        if decision == "needs_enrichment" and recommended_order:
+            return f"[!] LLM #{recommended_order}"
+        elif decision == "needs_enrichment":
+            return "[!] LLM"
+        return "[ok]"
+
+    def _resolve_and_dismiss(
+        self,
+        status: str,
+        notes: str | None = None,
+        decision: str | None = None,
+        modifications: dict[str, Any] | None = None,
+    ) -> None:
+        """Post checkpoint resolution and dismiss screen.
+
+        Args:
+            status: Resolution status (e.g., "approved", "rejected", "modified")
+            notes: Optional user notes
+            decision: Optional decision string (for regression_approval)
+            modifications: Optional modifications dict
+        """
+        self.post_message(
+            CheckpointResolved(
+                status=status,
+                decision=decision,
+                notes=notes if notes else None,
+                modifications=modifications,
+            )
+        )
+        self.dismiss()
+
     def _compose_action_inputs(self) -> ComposeResult:
         """Compose action-specific input widgets."""
         if self.checkpoint_type == "regression_approval":
@@ -611,15 +645,14 @@ class CheckpointReviewScreen(Screen):
                         rec_ord = judgment.get("recommended_order")
 
                         # Status indicator
-                        if decision == "needs_enrichment" and rec_ord:
-                            status = f"[!] LLM #{rec_ord}"
-                        elif decision == "needs_enrichment":
-                            status = "[!] LLM"
-                        else:
-                            status = "[ok]"
+                        status = self._get_enrichment_status_indicator(decision, rec_ord)
 
                         # Truncate title for display
-                        short_title = title[:40] + "..." if len(title) > 40 else title
+                        short_title = (
+                            title[:_MAX_TITLE_DISPLAY_LENGTH] + "..."
+                            if len(title) > _MAX_TITLE_DISPLAY_LENGTH
+                            else title
+                        )
 
                         with Horizontal(classes="ranking-row"):
                             yield Input(
@@ -654,7 +687,11 @@ class CheckpointReviewScreen(Screen):
                         priority_str = f" [{priority}]" if priority else ""
 
                         # Truncate title for display
-                        short_title = title[:35] + "..." if len(title) > 35 else title
+                        short_title = (
+                            title[:_MAX_TITLE_DISPLAY_LENGTH_COMPACT] + "..."
+                            if len(title) > _MAX_TITLE_DISPLAY_LENGTH_COMPACT
+                            else title
+                        )
 
                         with Horizontal(classes="ranking-row"):
                             yield Input(
@@ -784,102 +821,70 @@ class CheckpointReviewScreen(Screen):
         # For issue_selection, issue_enrichment: use ranked inputs, not OptionList
         # For other checkpoint types: use Approve/Reject buttons
 
-    def on_button_pressed(self, event: Button.Pressed) -> None:
-        """Handle button press events."""
-        button_id = event.button.id
+    def _handle_cancel(self) -> None:
+        """Handle cancel button press."""
+        self.dismiss()
+
+    def _handle_approve(self) -> None:
+        """Handle approve button press."""
         notes = self._get_notes()
 
-        if button_id == "btn-cancel":
-            self.dismiss()
-            return
+        if self.checkpoint_type == "issue_enrichment":
+            enrichment_order = self._collect_enrichment_rankings()
+            # If user provided rankings, use them (modified status)
+            # If empty, use LLM defaults (approved status)
+            status = "modified" if enrichment_order else "approved"
+            self._resolve_and_dismiss(status=status, notes=notes, modifications={"enrichment_order": enrichment_order})
 
-        if button_id == "btn-approve":
-            # Special handling for issue_enrichment with ranked inputs
-            if self.checkpoint_type == "issue_enrichment":
-                enrichment_order = self._collect_enrichment_rankings()
+        elif self.checkpoint_type == "issue_selection":
+            issue_order = self._collect_issue_rankings()
+            # If user provided rankings, use them (modified status)
+            # If empty, use LLM defaults (approved status)
+            status = "modified" if issue_order else "approved"
+            self._resolve_and_dismiss(status=status, notes=notes, modifications={"issue_order": issue_order})
 
-                # If user provided rankings, use them (modified status)
-                # If empty, use LLM defaults (approved status)
-                status = "modified" if enrichment_order else "approved"
+        else:
+            # Other checkpoint types
+            self._resolve_and_dismiss(status="approved", notes=notes)
 
-                self.post_message(
-                    CheckpointResolved(
-                        status=status,
-                        notes=notes if notes else None,
-                        modifications={"enrichment_order": enrichment_order},
-                    )
-                )
-                self.dismiss()
-            elif self.checkpoint_type == "issue_selection":
-                # Collect issue rankings
-                issue_order = self._collect_issue_rankings()
+    def _handle_reject(self) -> None:
+        """Handle reject button press."""
+        notes = self._get_notes()
+        self._resolve_and_dismiss(status="rejected", notes=notes if notes else "Rejected via TUI")
 
-                # If user provided rankings, use them (modified status)
-                # If empty, use LLM defaults (approved status)
-                status = "modified" if issue_order else "approved"
+    def _handle_modify(self) -> None:
+        """Handle modify button press (MR review)."""
+        notes = self._get_notes()
+        try:
+            title_input = self.query_one("#mr-title-input", Input)
+            new_title = title_input.value.strip()
+            original_title = self.context.get("mr_title", "")
 
-                self.post_message(
-                    CheckpointResolved(
-                        status=status,
-                        notes=notes if notes else None,
-                        modifications={"issue_order": issue_order},
-                    )
-                )
-                self.dismiss()
+            modifications: dict[str, Any] = {}
+            if new_title and new_title != original_title:
+                modifications["mr_title"] = new_title
+
+            if modifications:
+                self._resolve_and_dismiss(status="modified", notes=notes, modifications=modifications)
             else:
-                # Other checkpoint types
-                self.post_message(
-                    CheckpointResolved(
-                        status="approved",
-                        notes=notes if notes else None,
-                    )
-                )
-                self.dismiss()
+                # No actual modifications, just approve
+                self._resolve_and_dismiss(status="approved", notes=notes)
+        except NoMatches as e:
+            # Widget not found
+            self.notify(f"Error: {e}", severity="error")
 
-        elif button_id == "btn-reject":
-            self.post_message(
-                CheckpointResolved(
-                    status="rejected",
-                    notes=notes if notes else "Rejected via TUI",
-                )
-            )
-            self.dismiss()
-
-        elif button_id == "btn-apply-action":
-            # Regression approval - use helper method
-            self._handle_regression_action()
-
-        elif button_id == "btn-modify":
-            # MR review with modifications
-            try:
-                title_input = self.query_one("#mr-title-input", Input)
-                new_title = title_input.value.strip()
-                original_title = self.context.get("mr_title", "")
-
-                modifications = {}
-                if new_title and new_title != original_title:
-                    modifications["mr_title"] = new_title
-
-                if modifications:
-                    self.post_message(
-                        CheckpointResolved(
-                            status="modified",
-                            notes=notes if notes else None,
-                            modifications=modifications,
-                        )
-                    )
-                else:
-                    # No actual modifications, just approve
-                    self.post_message(
-                        CheckpointResolved(
-                            status="approved",
-                            notes=notes if notes else None,
-                        )
-                    )
-                self.dismiss()
-            except NoMatches as e:
-                # Widget not found
-                self.notify(f"Error: {e}", severity="error")
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        """Handle button press events."""
+        handlers: dict[str | None, Callable[[], None]] = {
+            "btn-cancel": self._handle_cancel,
+            "btn-approve": self._handle_approve,
+            "btn-reject": self._handle_reject,
+            "btn-apply-action": self._handle_regression_action,
+            "btn-modify": self._handle_modify,
+        }
+        handler = handlers.get(event.button.id)
+        if handler:
+            handler()
 
     def action_cancel(self) -> None:
         """Cancel and dismiss the screen."""
@@ -889,35 +894,28 @@ class CheckpointReviewScreen(Screen):
         """Quick approve with appropriate defaults for each checkpoint type."""
         if self.checkpoint_type == "issue_enrichment":
             # Quick approve with LLM-recommended order (empty = use context.recommended_enrichment_order)
-            self.post_message(
-                CheckpointResolved(
-                    status="approved",
-                    notes="Quick approved with LLM-recommended order",
-                    modifications={"enrichment_order": []},  # Empty = use LLM defaults
-                )
+            self._resolve_and_dismiss(
+                status="approved",
+                notes="Quick approved with LLM-recommended order",
+                modifications={"enrichment_order": []},  # Empty = use LLM defaults
             )
         elif self.checkpoint_type == "regression_approval":
             # Default to fix_now for regression
-            self.post_message(
-                CheckpointResolved(
-                    status="approved",
-                    decision="fix_now",
-                    notes="Quick approved with fix_now action",
-                )
+            self._resolve_and_dismiss(
+                status="approved",
+                decision="fix_now",
+                notes="Quick approved with fix_now action",
             )
         elif self.checkpoint_type == "issue_selection":
             # Quick approve with LLM-recommended order (empty = use context.recommended_issue_order)
-            self.post_message(
-                CheckpointResolved(
-                    status="approved",
-                    notes="Quick approved with LLM-recommended order",
-                    modifications={"issue_order": []},  # Empty = use LLM defaults
-                )
+            self._resolve_and_dismiss(
+                status="approved",
+                notes="Quick approved with LLM-recommended order",
+                modifications={"issue_order": []},  # Empty = use LLM defaults
             )
         else:
             # Default approve for other checkpoint types
-            self.post_message(CheckpointResolved(status="approved"))
-        self.dismiss()
+            self._resolve_and_dismiss(status="approved")
 
     def action_quick_reject(self) -> None:
         """Quick reject (or skip) for checkpoint types that support it."""
@@ -931,15 +929,9 @@ class CheckpointReviewScreen(Screen):
             return
         if self.checkpoint_type == "issue_enrichment":
             # Quick skip enrichment - reject to skip entirely
-            self.post_message(
-                CheckpointResolved(
-                    status="rejected",
-                    notes="Quick skipped - no enrichment",
-                )
-            )
+            self._resolve_and_dismiss(status="rejected", notes="Quick skipped - no enrichment")
         else:
-            self.post_message(CheckpointResolved(status="rejected", notes="Quick rejected via TUI"))
-        self.dismiss()
+            self._resolve_and_dismiss(status="rejected", notes="Quick rejected via TUI")
 
     def action_scroll_up(self) -> None:
         """Scroll the details section up."""

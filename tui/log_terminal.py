@@ -22,6 +22,9 @@ class LogTerminal(RichLog):
     It uses async file tailing to show real-time updates.
     """
 
+    _FILE_WAIT_INTERVAL: float = 0.5  # Seconds to wait when file doesn't exist
+    _POLL_INTERVAL: float = 0.2  # Seconds between file reads for new content
+
     def __init__(
         self,
         log_file: Path | str | None = None,
@@ -47,23 +50,9 @@ class LogTerminal(RichLog):
             auto_scroll=True,
         )
         self._log_file: Path | None = Path(log_file) if log_file else None
-        self._tail_task: asyncio.Task | None = None
+        self._tail_task: asyncio.Task[None] | None = None
         self._file_position: int = 0
         self._active: bool = False
-
-    def set_log_file(self, log_file: Path | str) -> None:
-        """Set or change the log file to tail.
-
-        Args:
-            log_file: Path to the log file
-        """
-        self._log_file = Path(log_file)
-        self._file_position = 0
-
-        # If already active, restart tailing
-        if self._active:
-            self._stop_tailing()
-            self._start_tailing()
 
     def start(self) -> None:
         """Start tailing the log file."""
@@ -102,7 +91,7 @@ class LogTerminal(RichLog):
             while not self._log_file.exists():
                 if not self._active:
                     return
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(self._FILE_WAIT_INTERVAL)
 
             # Read existing content first
             with open(self._log_file, encoding="utf-8", errors="replace") as f:
@@ -124,7 +113,7 @@ class LogTerminal(RichLog):
                     # File was deleted, wait for it to reappear
                     pass
 
-                await asyncio.sleep(0.2)  # Poll interval
+                await asyncio.sleep(self._POLL_INTERVAL)
 
         except asyncio.CancelledError:
             pass
@@ -139,15 +128,6 @@ class LogTerminal(RichLog):
             stripped_line = line.rstrip("\n\r")
             if stripped_line:
                 self.write(Text.from_ansi(stripped_line))
-
-    def write_message(self, message: str, style: str = "cyan") -> None:
-        """Write a styled message to the terminal.
-
-        Args:
-            message: The message to write
-            style: Rich style string
-        """
-        self.write(Text(message, style=style))
 
     def on_mount(self) -> None:
         """Start tailing when mounted if a log file is set."""

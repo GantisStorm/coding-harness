@@ -71,6 +71,8 @@ class AgentConfig:
     max_iterations: int | None = None
     target_branch: str = "main"
     auto_accept: bool = False
+    file_only_mode: bool = False  # If True, use local files instead of GitLab for tracking
+    skip_mr_creation: bool = False  # If True, skip MR creation after coding completes
 
 
 @dataclass
@@ -248,6 +250,8 @@ def _load_workspace_config(config: AgentConfig) -> AgentConfig:
         max_iterations=config.max_iterations,
         target_branch=config.target_branch,
         auto_accept=config.auto_accept or workspace_data.get("auto_accept", False),
+        file_only_mode=config.file_only_mode,
+        skip_mr_creation=config.skip_mr_creation,
     )
 
 
@@ -285,14 +289,20 @@ def _get_session_prompt(session_type: SessionType, config: AgentConfig) -> str:
             target_branch=config.target_branch,
             spec_slug=config.spec_slug,
             spec_hash=config.spec_hash,
+            file_only_mode=config.file_only_mode,
         )
     if session_type == SessionType.MR_CREATION:
         return get_mr_creation_prompt(
             spec_slug=config.spec_slug,
             spec_hash=config.spec_hash,
             target_branch=config.target_branch,
+            file_only_mode=config.file_only_mode,
         )
-    return get_coding_prompt(spec_slug=config.spec_slug, spec_hash=config.spec_hash)
+    return get_coding_prompt(
+        spec_slug=config.spec_slug,
+        spec_hash=config.spec_hash,
+        file_only_mode=config.file_only_mode,
+    )
 
 
 async def _handle_pending_checkpoint(config: AgentConfig) -> bool:
@@ -400,13 +410,19 @@ def _print_final_summary(config: AgentConfig) -> None:
     print("\nDone!")
 
 
-def determine_session_type(project_dir: Path, spec_slug: str, spec_hash: str) -> SessionType:
+def determine_session_type(
+    project_dir: Path,
+    spec_slug: str,
+    spec_hash: str,
+    skip_mr_creation: bool = False,
+) -> SessionType:
     """Determine which type of session to run based on milestone state.
 
     Args:
         project_dir: Project directory
         spec_slug: Spec slug identifier (required)
         spec_hash: 5-character hex hash (required)
+        skip_mr_creation: If True, never return MR_CREATION session type
 
     Returns:
         Session type: SessionType.INITIALIZER, SessionType.CODING, or SessionType.MR_CREATION
@@ -416,6 +432,10 @@ def determine_session_type(project_dir: Path, spec_slug: str, spec_hash: str) ->
 
     state = _load_milestone_state(project_dir, spec_slug, spec_hash)
     if state and state.get("all_issues_closed", False):
+        # Skip MR creation if flag is set
+        if skip_mr_creation:
+            return SessionType.CODING  # Will be handled by special completion logic
+
         # Validate milestone state before allowing MR creation
         is_valid, error_msg = _validate_milestone_state(state)
         if not is_valid:
@@ -424,8 +444,8 @@ def determine_session_type(project_dir: Path, spec_slug: str, spec_hash: str) ->
             return SessionType.CODING
 
         # Check if MR_PHASE_TRANSITION checkpoint is approved
-        # NOTE: Depends on is_checkpoint_type_approved in agent/hitl.py (parallel change)
-        # NOTE: Depends on CheckpointType.MR_PHASE_TRANSITION in common/types.py (parallel change)
+        # Uses is_checkpoint_type_approved from agent/core/hitl.py
+        # Uses CheckpointType.MR_PHASE_TRANSITION from common/types.py
         if not is_checkpoint_type_approved(project_dir, spec_slug, spec_hash, CheckpointType.MR_PHASE_TRANSITION):
             print("\n[HITL] Waiting for MR phase approval before creating merge request.")
             print("  All issues are closed. Approve the MR_PHASE_TRANSITION checkpoint to proceed.")
@@ -445,6 +465,8 @@ async def run_autonomous_agent(  # pylint: disable=too-many-locals
     max_iterations: int | None = None,
     target_branch: str = "main",
     auto_accept: bool = False,
+    file_only_mode: bool = False,
+    skip_mr_creation: bool = False,
     on_output: OutputCallback | None = None,
     on_tool: ToolCallback | None = None,
     on_phase: Callable[[SessionType, int], None] | None = None,
@@ -462,6 +484,8 @@ async def run_autonomous_agent(  # pylint: disable=too-many-locals
         max_iterations: Maximum number of iterations (None for unlimited)
         target_branch: Target branch for merge request (default: main)
         auto_accept: Automatically approve HITL checkpoints (default: False)
+        file_only_mode: Use local file tracking instead of GitLab (default: False)
+        skip_mr_creation: Skip MR creation after coding completes (default: False)
         on_output: Optional callback for text output (TUI integration)
         on_tool: Optional callback for tool usage (TUI integration)
         on_phase: Optional callback for phase changes (session_type, iteration)
@@ -477,6 +501,8 @@ async def run_autonomous_agent(  # pylint: disable=too-many-locals
         max_iterations=max_iterations,
         target_branch=target_branch,
         auto_accept=auto_accept,
+        file_only_mode=file_only_mode,
+        skip_mr_creation=skip_mr_creation,
     )
     callbacks = AgentCallbacks(on_output=on_output, on_tool=on_tool, on_phase=on_phase)
     events = AgentEvents(stop_event=stop_event, pause_event=pause_event)
@@ -526,10 +552,28 @@ async def _run_agent_loop(
             break
 
         # Re-determine session type (in case it changed)
-        session_type = determine_session_type(config.project_dir, config.spec_slug, config.spec_hash)
+        session_type = determine_session_type(
+            config.project_dir,
+            config.spec_slug,
+            config.spec_hash,
+            skip_mr_creation=config.skip_mr_creation,
+        )
+
+        # Check if skip_mr_creation is set and all issues are closed - agent should stop
+        state = _load_milestone_state(config.project_dir, config.spec_slug, config.spec_hash)
+        if config.skip_mr_creation and state and state.get("all_issues_closed", False):
+            feature_branch = state.get("feature_branch", f"feature/{config.spec_slug}-{config.spec_hash}")
+            print("\n" + _SEPARATOR_HEAVY)
+            print("  CODING COMPLETE - MR CREATION SKIPPED")
+            print(_SEPARATOR_HEAVY)
+            print("\nAll issues are closed. MR creation was skipped as requested.")
+            print(f"Changes are available on branch: {feature_branch}")
+            print("\nTo create an MR manually:")
+            print(f"  git push origin {feature_branch}")
+            print(f"  # Then create MR via GitLab UI targeting {config.target_branch}")
+            break
 
         # Check if milestone is already completed (MR created and milestone closed)
-        state = _load_milestone_state(config.project_dir, config.spec_slug, config.spec_hash)
         if state and state.get("milestone_closed", False):
             print("\n" + _SEPARATOR_HEAVY)
             print("  MILESTONE COMPLETED")

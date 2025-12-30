@@ -42,8 +42,7 @@ def main() -> None:
 
     success, error = validate_required_env_vars()
     if not success:
-        print(error)
-        sys.exit(1)
+        _exit_with_error(error)
 
     # Parse spec configurations
     spec_configs = _parse_spec_configs(args)
@@ -60,6 +59,17 @@ def main() -> None:
 # ============================================================================
 # Private Helper Functions
 # ============================================================================
+
+
+def _exit_with_error(*messages: str) -> None:
+    """Print error messages and exit with code 1.
+
+    Args:
+        *messages: One or more error message strings to print.
+    """
+    for msg in messages:
+        print(msg)
+    sys.exit(1)
 
 
 def _parse_args() -> argparse.Namespace:
@@ -153,6 +163,62 @@ def _validate_absolute_paths(specs: list[SpecConfig]) -> tuple[bool, str]:
     return (True, "")
 
 
+def _parse_and_validate_json(specs_json: str) -> list[dict]:
+    """Parse JSON specs string and validate basic structure.
+
+    Args:
+        specs_json: JSON string containing spec configurations.
+
+    Returns:
+        List of spec dictionaries.
+
+    Raises:
+        SystemExit: If JSON is invalid or not a non-empty list.
+    """
+    try:
+        specs_data = json.loads(specs_json)
+    except json.JSONDecodeError as e:
+        _exit_with_error(f"Error: Invalid JSON in --specs argument: {e}")
+
+    if not isinstance(specs_data, list):
+        _exit_with_error(
+            "Error: --specs must be a JSON array of spec configurations",
+            'Example: --specs \'[{"spec_file":"/path/to/spec.txt",'
+            '"project_dir":"/path/to/project","target_branch":"main"}]\'',
+        )
+
+    if not specs_data:
+        _exit_with_error("Error: --specs array cannot be empty")
+
+    return specs_data  # type: ignore[return-value]
+
+
+def _validate_spec_objects(specs_data: list[dict]) -> None:
+    """Validate that each spec object has required fields.
+
+    Args:
+        specs_data: List of spec dictionaries to validate.
+
+    Raises:
+        SystemExit: If any spec is invalid.
+    """
+    required_fields = ["spec_file", "project_dir", "target_branch"]
+
+    for i, spec in enumerate(specs_data):
+        if not isinstance(spec, dict):
+            _exit_with_error(f"Error: Spec {i + 1} must be a JSON object, got {type(spec).__name__}")
+
+        missing_fields = [f for f in required_fields if f not in spec]
+        if missing_fields:
+            _exit_with_error(
+                f"Error: Spec {i + 1} is missing required fields: {', '.join(missing_fields)}",
+                "\nRequired fields for each spec:",
+                "  spec_file        Path to the specification file (absolute path)",
+                "  project_dir      Root project directory (absolute path)",
+                "  target_branch    Git branch to target for changes",
+            )
+
+
 def _parse_spec_configs(args: argparse.Namespace) -> list[SpecConfig]:
     """Parse spec configurations from arguments.
 
@@ -165,50 +231,22 @@ def _parse_spec_configs(args: argparse.Namespace) -> list[SpecConfig]:
         List of SpecConfig objects, or empty list if no specs provided.
     """
     if args.specs:
-        # JSON array format
+        specs_data = _parse_and_validate_json(args.specs)
+        _validate_spec_objects(specs_data)
+
         try:
-            specs_data = json.loads(args.specs)
-        except json.JSONDecodeError as e:
-            print(f"Error: Invalid JSON in --specs argument: {e}")
-            sys.exit(1)
-
-        # Validate JSON structure - must be a list of objects
-        if not isinstance(specs_data, list):
-            print("Error: --specs must be a JSON array of spec configurations")
-            print(
-                'Example: --specs \'[{"spec_file":"/path/to/spec.txt",'
-                '"project_dir":"/path/to/project","target_branch":"main"}]\''
-            )
-            sys.exit(1)
-
-        if not specs_data:
-            print("Error: --specs array cannot be empty")
-            sys.exit(1)
-
-        for i, spec in enumerate(specs_data):
-            if not isinstance(spec, dict):
-                print(f"Error: Spec {i + 1} must be a JSON object, got {type(spec).__name__}")
-                sys.exit(1)
-            # Validate required fields
-            required_fields = ["spec_file", "project_dir", "target_branch"]
-            missing_fields = [f for f in required_fields if f not in spec]
-            if missing_fields:
-                print(f"Error: Spec {i + 1} is missing required fields: {', '.join(missing_fields)}")
-                print("\nRequired fields for each spec:")
-                print("  spec_file        Path to the specification file (absolute path)")
-                print("  project_dir      Root project directory (absolute path)")
-                print("  target_branch    Git branch to target for changes")
-                sys.exit(1)
-
-        specs = [SpecConfig.from_dict(s) for s in specs_data]
+            specs = [SpecConfig.from_dict(s) for s in specs_data]
+        except (KeyError, ValueError, TypeError) as e:
+            _exit_with_error(f"Error: Failed to create spec configuration: {e}")
 
         # Validate that all paths are absolute
         is_valid, error_msg = _validate_absolute_paths(specs)
         if not is_valid:
-            print(f"Error: {error_msg}")
-            print("\nAll paths in --specs must be absolute paths.")
-            print("Example: /home/user/specs/myspec.txt (not ./specs/myspec.txt)")
-            sys.exit(1)
+            _exit_with_error(
+                f"Error: {error_msg}",
+                "\nAll paths in --specs must be absolute paths.",
+                "Example: /home/user/specs/myspec.txt (not ./specs/myspec.txt)",
+            )
 
         return specs
 

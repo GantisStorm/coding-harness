@@ -73,7 +73,6 @@ class SpecSelectScreen(Screen):
     def __init__(
         self,
         repo_dir: Path,
-        project_dir: Path | None = None,
         name: str | None = None,
         id: str | None = None,  # pylint: disable=redefined-builtin
         classes: str | None = None,
@@ -82,24 +81,17 @@ class SpecSelectScreen(Screen):
 
         Args:
             repo_dir: The repository directory to start browsing from
-            project_dir: Optional working directory for context display
             name: Optional widget name
             id: Optional widget ID
             classes: Optional CSS classes
         """
         super().__init__(name=name, id=id, classes=classes)
         self.repo_dir = repo_dir
-        self.project_dir = project_dir
 
     def compose(self) -> ComposeResult:
         """Compose the spec file selection screen."""
         with Vertical():
-            # Show working directory context in title if provided
-            if self.project_dir:
-                title = f"Select Specification File for {self.project_dir.name}"
-            else:
-                title = "Select Specification File"
-            yield Static(title, classes="title")
+            yield Static(f"Select Specification File for {self.repo_dir.name}", classes="title")
 
             yield Static(
                 "Choose a specification file to process. You can type a path or browse using the tree below.",
@@ -151,7 +143,7 @@ class SpecSelectScreen(Screen):
             path: The path to validate
 
         Returns:
-            A tuple of (is_valid, error_message)
+            A tuple of (is_valid, error_message). If valid, error_message is empty.
         """
         if not path.exists():
             return False, f"File does not exist: {path}"
@@ -162,7 +154,7 @@ class SpecSelectScreen(Screen):
         # Check if the file is readable
         try:
             path.read_bytes()[:1]
-        except (OSError, PermissionError) as e:
+        except OSError as e:
             return False, f"Cannot read file: {e}"
 
         return True, ""

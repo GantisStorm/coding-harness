@@ -67,7 +67,9 @@ def main() -> None:
 
     # Initialize agent workspace before running
     try:
-        agent_dir, spec_slug, spec_hash = initialize_agent_workspace(project_dir, spec_file, args.target_branch)
+        agent_dir, spec_slug, spec_hash = initialize_agent_workspace(
+            project_dir, spec_file, args.target_branch, file_only_mode=args.file_only, skip_mr_creation=args.skip_mr
+        )
 
         # Validate return values
         if not agent_dir or not spec_slug or not spec_hash:
@@ -94,6 +96,8 @@ def main() -> None:
                 spec_slug=spec_slug,
                 spec_hash=spec_hash,
                 auto_accept=os.getenv("CODING_HARNESS_AUTO_ACCEPT", "0") == "1",
+                file_only_mode=args.file_only,
+                skip_mr_creation=args.skip_mr,
             )
         )
     except KeyboardInterrupt:
@@ -158,6 +162,18 @@ Environment Variables (Required):
         type=str,
         required=True,
         help="Path to the spec file (required)",
+    )
+
+    parser.add_argument(
+        "--file-only",
+        action="store_true",
+        help="Use local file tracking instead of GitLab for milestones/issues",
+    )
+
+    parser.add_argument(
+        "--skip-mr",
+        action="store_true",
+        help="Skip MR creation after coding completes (keep changes on branch)",
     )
 
     return parser.parse_args()

@@ -25,6 +25,5 @@ venv/
 
 # OS
 .DS_Store
-.claude/agents
-.claude/commands
-.claude/plans
+.claude/
+.serena/
