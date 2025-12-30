@@ -1,5 +1,21 @@
 {
   "recommendations": [
-    "ms-python.python"
+    "astro-build.astro-vscode",
+    "anthropic.claude-code",
+    "openai.codex",
+    "ms-azuretools.vscode-containers",
+    "ms-azuretools.vscode-docker",
+    "google.gemini-cli-companion",
+    "kilocode.kilo-code",
+    "shd101wyy.markdown-preview-enhanced",
+    "ms-python.python",
+    "ms-python.debugpy",
+    "donjayamanne.python-environment-manager",
+    "ms-python.vscode-python-envs",
+    "donjayamanne.python-extension-pack",
+    "kevinrose.vsc-python-indent",
+    "charliermarsh.ruff",
+    "emmanuelbeziat.vscode-great-icons",
+    "codeium.windsurf-pyright"
   ]
 }

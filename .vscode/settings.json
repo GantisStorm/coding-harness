@@ -6,15 +6,5 @@
     "editor.codeActionsOnSave": {
       "source.organizeImports": "explicit"
     }
-  },
-  "cursorpyright.analysis.autoSearchPaths": true,
-  "cursorpyright.analysis.diagnosticMode": "workspace",
-  "cursorpyright.analysis.typeCheckingMode": "basic",
-  "cursorpyright.analysis.extraPaths": [
-    "${workspaceFolder}"
-  ],
-  "cursorpyright.analysis.diagnosticSeverityOverrides": {
-    "reportMissingImports": "warning",
-    "reportMissingTypeStubs": "none"
   }
 }
