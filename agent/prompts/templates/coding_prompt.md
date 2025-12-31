@@ -155,7 +155,7 @@ Before doing anything else, check if there's an approved checkpoint from a previ
 1. **Extract spec_hash from workspace info**
    - Read `.claude-agent/{{SPEC_SLUG}}/.workspace_info.json`
    - Extract `spec_hash` and `project_id` from the JSON
-   - **Validation:** Ensure `spec_hash` is a 5-character alphanumeric string (e.g., "a3f9c")
+   - **Validation:** Ensure `spec_hash` is an 8-character base62 string (e.g., "K7xMp2Qw")
    - **Fallback if file doesn't exist:**
      ```bash
      # Find directory matching pattern and extract hash
@@ -581,6 +581,7 @@ Common commands (if documented in project):
 **IMPORTANT:** Do NOT skip this step. Dead code cleanup is part of maintaining a healthy codebase
 and prevents confusion for future agents about what code is actually in use.
 
+{{#UNLESS_SKIP_TEST_SUITE}}
 #### 5B: Test Suite Execution & Repair (If Available)
 
 **Run existing tests and FIX any failures before making new changes.**
@@ -666,7 +667,9 @@ mcp__gitlab__push_files(
 ```
 
 **GUARDRAIL:** All tests must pass (or be explicitly skipped with reason) before implementing new features.
+{{/UNLESS_SKIP_TEST_SUITE}}
 
+{{#UNLESS_SKIP_REGRESSION}}
 #### 5C: Feature Regression Testing
 
 Use `mcp__gitlab__get_milestone_issue` with:
@@ -772,6 +775,7 @@ DECISION OPTIONS:
 - `defer` - Create new bug issue, continue with planned work
 - `rollback` - Run `git revert` on problematic commits
 - `false_positive` - Clear checkpoint, continue with planned work
+{{/UNLESS_SKIP_REGRESSION}}
 
 ---
 
@@ -1300,6 +1304,7 @@ This signals to any other agents (or humans watching) that this issue is being w
 
 ---
 
+{{#UNLESS_SKIP_PUPPETEER}}
 ### STEP 9: VERIFY WITH BROWSER AUTOMATION
 
 **You MUST verify features through the actual UI.**
@@ -1335,6 +1340,7 @@ This signals to any other agents (or humans watching) that this issue is being w
 - Skip visual verification
 - Mark issues Done without thorough verification
 - Guess the frontend URL - always check project documentation
+{{/UNLESS_SKIP_PUPPETEER}}
 
 ---
 
@@ -1344,6 +1350,7 @@ This signals to any other agents (or humans watching) that this issue is being w
 
 This is a MANDATORY verification loop before requesting issue closure.
 
+{{#UNLESS_SKIP_TEST_SUITE}}
 #### 9A.1: Re-run Test Suite
 
 Run the test suite using the command documented in the project's CLAUDE.md, README.md, or DEVGUIDE.md files.
@@ -1373,7 +1380,9 @@ IF tests still failing after 3 iterations:
     - Report: "Tests failing after 3 fix attempts. Need human guidance."
     - STOP AND WAIT for human decision
 ```
+{{/UNLESS_SKIP_TEST_SUITE}}
 
+{{#UNLESS_SKIP_REGRESSION}}
 #### 9A.2: Quick Regression Spot-Check
 
 **CRITICAL:** Before requesting closure, spot-check previously completed features.
@@ -1411,6 +1420,7 @@ IF regression still exists after 3 attempts:
     - Report: "Regression persists after 3 fix attempts. Need human guidance."
     - STOP AND WAIT
 ```
+{{/UNLESS_SKIP_REGRESSION}}
 
 #### 9A.3: Build & Quality Gate
 
@@ -1670,11 +1680,40 @@ mcp__gitlab__list_commits(
   - Session handoff notes
   - Implementation summary
 
+**Step 10.4: Sync local working directory with remote**
+
+After verifying the push succeeded, sync your local git state:
+
+```bash
+# Fetch the latest remote state (includes your just-pushed commit)
+git fetch origin
+
+# Reset local branch to match remote exactly
+git reset --hard origin/[feature_branch from .gitlab_milestone.json]
+```
+
+> **WHY THIS STEP?** MCP push creates a commit on the remote but doesn't update
+> your local git state. Without this sync, `git status` will still show your
+> edited files as modified. The reset discards those local changes because they
+> now exist on the remote.
+
+**Verify sync succeeded:**
+```bash
+git status  # Should show: "nothing to commit, working tree clean"
+git log -1  # Should show your commit message from the push
+```
+
+If `git status` still shows modified files after reset:
+1. Check that `git fetch` succeeded (network issues?)
+2. Verify you're on the correct branch: `git branch`
+3. Try again: `git fetch origin && git reset --hard origin/[branch]`
+
 **IMPORTANT:**
 - **ONLY push files in `session_files.tracked`** - never push files you didn't explicitly create or edit
 - Always push to the feature branch specified in `.gitlab_milestone.json`, NOT to the target branch
 - You must read each file's content before pushing - MCP requires actual file content, not just paths
 - Do NOT use `git add`, `git commit`, or `git push` - use MCP exclusively for write operations
+- DO use `git fetch` and `git reset --hard origin/<branch>` after MCP push to sync local state
 - **Maximum 20 files per push operation** - if more files, split into multiple pushes
 - **Never push `.claude-agent/` files** - they are local working files only
 
@@ -1912,7 +1951,14 @@ Status: [X]% complete - session ended",
    - Confirm your commit message appears at the top
    - **SAVE the commit SHA** - you need this for the handoff comment
 
-4. **Add session handoff comment (MANDATORY if issue is in-progress)**:
+4. **Sync local working directory**:
+   ```bash
+   git fetch origin
+   git reset --hard origin/[feature_branch]
+   ```
+   This resets your local state to match remote, ensuring the next session starts clean.
+
+5. **Add session handoff comment (MANDATORY if issue is in-progress)**:
 
    If the issue isn't complete, you MUST add a handoff comment so the next session knows where to continue:
 
@@ -1990,18 +2036,22 @@ Status: [X]% complete - session ended",
    **Why this matters:** The next session has NO memory. This comment IS the handoff.
    The more detailed you are, the faster the next session can continue.
 
-5. **Verify clean state** (should show no changes after MCP push):
+6. **Verify clean state** (after the sync step, should show no changes):
    ```bash
-   git status
+   git status  # Should show: "nothing to commit, working tree clean"
+   ```
+   If files still show as modified, run the sync again:
+   ```bash
+   git fetch origin && git reset --hard origin/[feature_branch]
    ```
 
-6. **Leave app in working state:**
+7. **Leave app in working state:**
    - No broken features
    - All servers can be restarted
    - No unpushed debugging code
    - All tests passing (or failures documented in handoff)
 
-7. **Provide a brief session summary** in your final response:
+8. **Provide a brief session summary** in your final response:
    ```markdown
    ## Session Summary
 

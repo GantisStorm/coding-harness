@@ -15,33 +15,42 @@ Exports:
         load_pending_checkpoint: Load most recent pending checkpoint
         is_checkpoint_pending: Check if checkpoint is pending
         get_pending_checkpoint_type: Get type of pending checkpoint
-        is_checkpoint_type_approved: Check if checkpoint type was approved
-        get_milestone_state_path: Get path to milestone state file
+
+    New modules (added by refactor):
+        CheckpointDispatcher: Strategy-based checkpoint handling
+        emit_output: Output utility
+        run_agent_session: Session execution
 """
 
+from .checkpoint_handlers import CheckpointDispatcher
 from .client import create_client
 from .hitl import (
     approve_checkpoint,
-    get_milestone_state_path,
     get_pending_checkpoint_type,
     is_checkpoint_pending,
-    is_checkpoint_type_approved,
     load_pending_checkpoint,
     reject_checkpoint,
     resolve_checkpoint,
 )
 from .orchestrator import determine_session_type, run_autonomous_agent
+from .output import emit_output
+from .session_runner import run_agent_session
 
 __all__ = [
+    # Client
     "create_client",
+    # Orchestrator
     "determine_session_type",
     "run_autonomous_agent",
+    # HITL
     "approve_checkpoint",
     "reject_checkpoint",
     "resolve_checkpoint",
     "load_pending_checkpoint",
     "is_checkpoint_pending",
     "get_pending_checkpoint_type",
-    "is_checkpoint_type_approved",
-    "get_milestone_state_path",
+    # New modules
+    "CheckpointDispatcher",
+    "emit_output",
+    "run_agent_session",
 ]

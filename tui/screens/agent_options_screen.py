@@ -16,7 +16,7 @@ from textual.widgets import Button, Checkbox, Static
 from ..events import FileOnlyModeSelected
 
 
-class FileOnlyModeScreen(Screen):
+class AgentOptionsScreen(Screen):
     """Screen for selecting agent behavior options.
 
     Allows the user to configure:
@@ -25,11 +25,11 @@ class FileOnlyModeScreen(Screen):
     """
 
     DEFAULT_CSS = """
-    FileOnlyModeScreen {
+    AgentOptionsScreen {
         align: center middle;
     }
 
-    FileOnlyModeScreen > Vertical {
+    AgentOptionsScreen > Vertical {
         width: 65%;
         height: auto;
         background: $surface;
@@ -37,34 +37,34 @@ class FileOnlyModeScreen(Screen):
         padding: 2 4;
     }
 
-    FileOnlyModeScreen .title {
+    AgentOptionsScreen .title {
         text-align: center;
         text-style: bold;
         margin-bottom: 2;
     }
 
-    FileOnlyModeScreen .section-title {
+    AgentOptionsScreen .section-title {
         text-style: bold;
         margin-top: 1;
         margin-bottom: 0;
     }
 
-    FileOnlyModeScreen .description {
+    AgentOptionsScreen .description {
         color: $text-muted;
         margin-bottom: 1;
     }
 
-    FileOnlyModeScreen Checkbox {
+    AgentOptionsScreen Checkbox {
         margin: 1 0;
     }
 
-    FileOnlyModeScreen Horizontal {
+    AgentOptionsScreen Horizontal {
         height: auto;
         align: center middle;
         margin-top: 2;
     }
 
-    FileOnlyModeScreen Button {
+    AgentOptionsScreen Button {
         margin: 0 1;
         min-width: 16;
     }
@@ -94,6 +94,15 @@ class FileOnlyModeScreen(Screen):
             )
             yield Checkbox("Skip MR creation (keep changes on branch)", id="skip-mr-checkbox")
 
+            yield Static("Testing Options", classes="section-title")
+            yield Static(
+                "Skip specific testing phases during development",
+                classes="description",
+            )
+            yield Checkbox("Skip Puppeteer/browser automation", id="skip-puppeteer-checkbox")
+            yield Checkbox("Skip test suite execution", id="skip-test-suite-checkbox")
+            yield Checkbox("Skip regression spot-checks", id="skip-regression-checkbox")
+
             with Horizontal():
                 yield Button("Continue", id="btn-continue", variant="primary")
 
@@ -111,7 +120,18 @@ class FileOnlyModeScreen(Screen):
         try:
             file_only = self.query_one("#file-only-checkbox", Checkbox).value
             skip_mr = self.query_one("#skip-mr-checkbox", Checkbox).value
-            self.post_message(FileOnlyModeSelected(file_only_mode=file_only, skip_mr_creation=skip_mr))
+            skip_puppeteer = self.query_one("#skip-puppeteer-checkbox", Checkbox).value
+            skip_test_suite = self.query_one("#skip-test-suite-checkbox", Checkbox).value
+            skip_regression = self.query_one("#skip-regression-checkbox", Checkbox).value
+            self.post_message(
+                FileOnlyModeSelected(
+                    file_only_mode=file_only,
+                    skip_mr_creation=skip_mr,
+                    skip_puppeteer=skip_puppeteer,
+                    skip_test_suite=skip_test_suite,
+                    skip_regression=skip_regression,
+                )
+            )
             self.dismiss()
         except NoMatches:
             # Should not happen in normal operation, but handle gracefully

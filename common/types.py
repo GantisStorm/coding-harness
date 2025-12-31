@@ -16,10 +16,6 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-# Default target branch for merge requests
-DEFAULT_TARGET_BRANCH: str = "main"
-
-
 # ============================================================================
 # HITL Checkpoint Types
 # ============================================================================
@@ -151,7 +147,7 @@ class SpecConfig:  # pylint: disable=too-many-instance-attributes
         project_dir: Root project directory for this spec (must exist)
         target_branch: Git branch name to target for this spec's changes
         spec_slug: URL-safe identifier derived from the spec filename
-        spec_hash: 5-character unique hash for this spec (enforces uniqueness)
+        spec_hash: 8-character base62 unique hash for this spec (enforces uniqueness)
         name: Human-readable display name for this spec
         max_iterations: Optional[int] = None - Maximum iterations allowed (None = unlimited)
         model: str - Claude model ID to use (default from CLAUDE_MODEL env var or claude-opus-4-5-20251101)
@@ -182,6 +178,9 @@ class SpecConfig:  # pylint: disable=too-many-instance-attributes
     model: str = ""  # Will be set from env or default in __post_init__
     file_only_mode: bool = False  # If True, use local files instead of GitLab for tracking
     skip_mr_creation: bool = False  # If True, skip MR creation after coding completes
+    skip_puppeteer: bool = False  # If True, skip Puppeteer/browser automation
+    skip_test_suite: bool = False  # If True, skip test suite execution
+    skip_regression_testing: bool = False  # If True, skip feature regression checks
 
     def __post_init__(self) -> None:
         """
@@ -239,9 +238,9 @@ class SpecConfig:  # pylint: disable=too-many-instance-attributes
         if not isinstance(self.model, str) or not self.model.strip():
             raise ValueError(f"model must be a non-empty string, got: {self.model}")
 
-        # Validate spec_hash format (must be exactly 5 hex characters)
-        if not re.match(r"^[a-f0-9]{5}$", self.spec_hash):
-            raise ValueError(f"spec_hash must be exactly 5 lowercase hex characters, got: {self.spec_hash}")
+        # Validate spec_hash format (must be exactly 8 base62 characters: 0-9, A-Z, a-z)
+        if not re.match(r"^[0-9A-Za-z]{8}$", self.spec_hash):
+            raise ValueError(f"spec_hash must be exactly 8 base62 characters (0-9, A-Z, a-z), got: {self.spec_hash}")
 
         # Validate spec_slug format (alphanumeric, hyphens, no leading/trailing hyphens)
         if not re.match(r"^[a-z0-9]+(-[a-z0-9]+)*$", self.spec_slug):
@@ -292,6 +291,9 @@ class SpecConfig:  # pylint: disable=too-many-instance-attributes
             "model": self.model,
             "file_only_mode": self.file_only_mode,
             "skip_mr_creation": self.skip_mr_creation,
+            "skip_puppeteer": self.skip_puppeteer,
+            "skip_test_suite": self.skip_test_suite,
+            "skip_regression_testing": self.skip_regression_testing,
         }
 
     @classmethod
@@ -356,4 +358,7 @@ class SpecConfig:  # pylint: disable=too-many-instance-attributes
             model=data.get("model", os.getenv("CLAUDE_MODEL", "claude-opus-4-5-20251101")),
             file_only_mode=data.get("file_only_mode", False),
             skip_mr_creation=data.get("skip_mr_creation", False),
+            skip_puppeteer=data.get("skip_puppeteer", False),
+            skip_test_suite=data.get("skip_test_suite", False),
+            skip_regression_testing=data.get("skip_regression_testing", False),
         )

@@ -59,11 +59,21 @@ class SpecSelected(Message):
 
 
 class FileOnlyModeSelected(Message):
-    """Message sent when agent options are selected (file-only mode and skip MR creation)."""
+    """Message sent when agent options are selected (file-only mode, skip flags)."""
 
-    def __init__(self, file_only_mode: bool, skip_mr_creation: bool) -> None:
+    def __init__(
+        self,
+        file_only_mode: bool,
+        skip_mr_creation: bool,
+        skip_puppeteer: bool = False,
+        skip_test_suite: bool = False,
+        skip_regression: bool = False,
+    ) -> None:
         self.file_only_mode = file_only_mode
         self.skip_mr_creation = skip_mr_creation
+        self.skip_puppeteer = skip_puppeteer
+        self.skip_test_suite = skip_test_suite
+        self.skip_regression = skip_regression
         super().__init__()
 
 

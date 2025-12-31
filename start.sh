@@ -5,13 +5,12 @@
 # ===========================
 #
 # Usage:
-#   ./start.sh                    # Run with Docker (default)
+#   ./start.sh                    # Build and run with Docker (default)
 #   ./start.sh --native           # Run natively with local venv
-#   ./start.sh --build            # Force rebuild Docker image
+#   ./start.sh --build            # Build image only (don't run)
 #   ./start.sh --connect [name]   # Connect to running container
 #   ./start.sh --list             # List running containers
 #   ./start.sh --specs '...'      # Pre-load specs from JSON
-#   ./start.sh --auto-accept      # Enable auto-accept mode for HITL checkpoints
 #
 # Examples:
 #
@@ -28,8 +27,8 @@
 #     "target_branch": "main"
 #   }]'
 #
-#   # Multiple specs with auto-accept:
-#   ./start.sh --auto-accept --specs '[
+#   # Multiple specs:
+#   ./start.sh --specs '[
 #     {
 #       "spec_file": "/home/user/specs/feature1.txt",
 #       "project_dir": "/home/user/project",
@@ -47,7 +46,7 @@
 #
 #   # Connect to a running container:
 #   ./start.sh --connect
-#   ./start.sh --connect coding-harness-2
+#   ./start.sh --connect coding-harness-a1b2c3d4
 #
 # Required Spec JSON Fields:
 #   spec_file        - Path to the specification file (absolute path)
@@ -241,26 +240,20 @@ if ! command -v docker &> /dev/null; then
     exit 1
 fi
 
-# Build image if needed
-if [ "$FORCE_BUILD" = true ] || ! docker image inspect "$IMAGE_NAME" &> /dev/null; then
-    echo "Building Docker image..."
-    if ! docker build --no-cache -t "$IMAGE_NAME" "$SCRIPT_DIR"; then
-        echo "Error: Docker build failed" >&2
-        exit 1
-    fi
-    if [ "$FORCE_BUILD" = true ]; then
-        echo "Build complete."
-        exit 0
-    fi
+# Always build image
+echo "Building Docker image..."
+if ! docker build -t "$IMAGE_NAME" "$SCRIPT_DIR"; then
+    echo "Error: Docker build failed" >&2
+    exit 1
+fi
+if [ "$FORCE_BUILD" = true ]; then
+    echo "Build complete."
+    exit 0
 fi
 
-# Find available container name
-CONTAINER_NAME="$IMAGE_NAME"
-COUNTER=2
-while docker ps -q -f "name=^${CONTAINER_NAME}$" | grep -q .; do
-    CONTAINER_NAME="${IMAGE_NAME}-${COUNTER}"
-    ((COUNTER++))
-done
+# Generate unique container name with random hash
+CONTAINER_HASH=$(head -c 4 /dev/urandom | xxd -p)
+CONTAINER_NAME="${IMAGE_NAME}-${CONTAINER_HASH}"
 
 echo "Starting: $CONTAINER_NAME"
 

@@ -1,8 +1,19 @@
-"""Common package - Shared types and utilities for agent and TUI."""
+"""Common package - Shared types and utilities for agent and TUI.
+
+Note: DaemonError and DaemonNotRunningError are defined in agent/daemon/client.py
+since they are tightly coupled with the daemon communication implementation.
+"""
 
 # Explicit re-exports for proper package API
 # pylint: disable=useless-import-alias
-from .types import DEFAULT_TARGET_BRANCH as DEFAULT_TARGET_BRANCH
+from .exceptions import CheckpointError as CheckpointError
+from .exceptions import CodingHarnessError as CodingHarnessError
+from .exceptions import StateError as StateError
+from .state import AgentState as AgentState
+from .state import FileStateRepository as FileStateRepository
+from .state import MilestoneState as MilestoneState
+from .state import StateRepository as StateRepository
+from .state import WorkspaceInfo as WorkspaceInfo
 from .types import CheckpointData as CheckpointData
 from .types import CheckpointStatus as CheckpointStatus
 from .types import CheckpointType as CheckpointType
@@ -15,12 +26,23 @@ from .utils import validate_required_env_vars as validate_required_env_vars
 # pylint: enable=useless-import-alias
 
 __all__ = [
+    # Exceptions
+    "CheckpointError",
+    "CodingHarnessError",
+    "StateError",
+    # State
+    "AgentState",
+    "FileStateRepository",
+    "MilestoneState",
+    "StateRepository",
+    "WorkspaceInfo",
+    # Types
     "CheckpointData",
     "CheckpointStatus",
     "CheckpointType",
-    "DEFAULT_TARGET_BRANCH",
     "SessionType",
     "SpecConfig",
+    # Utils
     "generate_spec_hash",
     "spec_filename_to_slug",
     "validate_required_env_vars",

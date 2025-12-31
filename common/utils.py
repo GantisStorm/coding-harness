@@ -6,7 +6,7 @@ Common utility functions used across agent and TUI packages.
 
 Public API:
     spec_filename_to_slug: Convert spec filename to URL-safe slug
-    generate_spec_hash: Generate deterministic hash from spec file content
+    generate_spec_hash: Generate unique 8-char base62 hash from spec file content + randomness
     validate_required_env_vars: Validate required environment variables
     ValidationResult: Type alias for validation function return type
 """
@@ -14,11 +14,16 @@ Public API:
 import hashlib
 import os
 import re
+import secrets
 from pathlib import Path
+from typing import TypeAlias
+
+# Base62 alphabet for compact, URL-safe identifiers
+BASE62_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
 # Type alias for validation result: (success: bool, error_message: str)
 # On success: (True, ""), on failure: (False, "error description")
-type ValidationResult = tuple[bool, str]
+ValidationResult: TypeAlias = tuple[bool, str]  # noqa: UP040
 
 
 def spec_filename_to_slug(spec_file: Path) -> str:
@@ -43,24 +48,50 @@ def spec_filename_to_slug(spec_file: Path) -> str:
     return slug or "default"
 
 
-def generate_spec_hash(spec_file: Path) -> str:
-    """Generate a deterministic 5-character hash for a spec file.
+def _int_to_base62(num: int, length: int) -> str:
+    """Convert an integer to a base62 string of fixed length.
 
-    Uses spec file content to generate a consistent hash.
-    Same spec file always produces the same hash.
+    Args:
+        num: Non-negative integer to convert
+        length: Desired output length (will be zero-padded)
+
+    Returns:
+        Base62 string of exactly `length` characters
+    """
+    if num == 0:
+        return BASE62_ALPHABET[0] * length
+
+    result = []
+    while num > 0:
+        result.append(BASE62_ALPHABET[num % 62])
+        num //= 62
+
+    # Pad to desired length
+    while len(result) < length:
+        result.append(BASE62_ALPHABET[0])
+
+    return "".join(reversed(result[-length:]))
+
+
+def generate_spec_hash(spec_file: Path) -> str:
+    """Generate an 8-character base62 hash for a spec file.
+
+    Combines spec file content hash with random bytes to create a unique
+    identifier for each run. Uses base62 encoding (0-9, A-Z, a-z) for
+    compact representation with ~218 trillion combinations.
 
     Args:
         spec_file: Path to the spec file
 
     Returns:
-        5-character hexadecimal hash (e.g., "a3f9c")
+        8-character base62 hash (e.g., "K7xMp2Qw")
 
     Raises:
         FileNotFoundError: If spec file does not exist
         OSError: If spec file cannot be read
-        ValueError: If generated hash is not valid 5-char hex format
+        ValueError: If generated hash is not valid 8-char base62 format
     """
-    # Read spec file content for deterministic hashing
+    # Read spec file content
     try:
         spec_content = spec_file.read_text(encoding="utf-8")
     except FileNotFoundError as e:
@@ -68,13 +99,19 @@ def generate_spec_hash(spec_file: Path) -> str:
     except (OSError, UnicodeDecodeError) as e:
         raise OSError(f"Failed to read spec file {spec_file}: {e}") from e
 
-    # Generate SHA256 hash from content and take first 5 characters
-    hash_obj = hashlib.sha256(spec_content.encode())
-    spec_hash = hash_obj.hexdigest()[:5]
+    # Combine content hash with random bytes for uniqueness
+    content_hash = hashlib.sha256(spec_content.encode()).digest()[:4]  # 4 bytes from content
+    random_bytes = secrets.token_bytes(4)  # 4 random bytes
 
-    # Validate hash format (5 lowercase hex characters)
-    if len(spec_hash) != 5 or not all(c in "0123456789abcdef" for c in spec_hash):
-        raise ValueError(f"Generated invalid spec_hash: {spec_hash} (expected 5-char hex)")
+    # Combine and convert to integer
+    combined = int.from_bytes(content_hash + random_bytes, "big")
+
+    # Convert to 8-character base62
+    spec_hash = _int_to_base62(combined, 8)
+
+    # Validate hash format (8 base62 characters)
+    if len(spec_hash) != 8 or not all(c in BASE62_ALPHABET for c in spec_hash):
+        raise ValueError(f"Generated invalid spec_hash: {spec_hash} (expected 8-char base62)")
 
     return spec_hash
 

@@ -165,7 +165,6 @@ class DaemonClient:
                 - project_dir: Project directory
                 - target_branch: Target branch for MR
                 - max_iterations: Optional max iterations
-                - auto_accept: Optional auto-accept mode
 
         Returns:
             Agent info dict
@@ -223,24 +222,3 @@ class DaemonClient:
         """
         with contextlib.suppress(DaemonError):
             await self._send_command({"cmd": "shutdown"})
-
-
-# Convenience functions for sync code
-def is_daemon_running() -> bool:
-    """Check if daemon is running (sync version)."""
-    return SOCKET_PATH.exists()
-
-
-def get_daemon_pid() -> int | None:
-    """Get daemon PID from pid file.
-
-    Returns None if file doesn't exist, is unreadable, or contains invalid data.
-    """
-    pid_file = Path("/tmp/coding-harness-daemon.pid")
-    if not pid_file.exists():
-        return None
-    try:
-        return int(pid_file.read_text(encoding="utf-8").strip())
-    except (ValueError, OSError):
-        # File exists but is unreadable or contains invalid PID
-        return None

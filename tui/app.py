@@ -35,7 +35,6 @@ from agent.core import (  # noqa: E402
 
 # Import agent functionality for orchestration
 from agent.daemon import DaemonClient, DaemonError, DaemonNotRunningError  # noqa: E402
-from agent.prompts import initialize_agent_workspace  # noqa: E402
 from common import (  # noqa: E402
     CheckpointStatus,
     SpecConfig,
@@ -56,9 +55,9 @@ from .log_terminal import LogTerminal  # noqa: E402
 from .screens import (  # noqa: E402
     AddAnotherSpecDialog,
     AdvancedOptionsScreen,
+    AgentOptionsScreen,
     BranchSelectScreen,
     CheckpointReviewScreen,
-    FileOnlyModeScreen,
     LogViewerScreen,
     RepoSelectScreen,
     SpecSelectScreen,
@@ -99,12 +98,9 @@ class AgentSession:
 
     def __post_init__(self) -> None:
         """Initialize workspace and load preferences."""
-        # Initialize workspace BEFORE agent runs
-        self.agent_dir, self.spec_slug, _ = initialize_agent_workspace(
-            self.config.project_dir,
-            self.config.spec_file,
-            self.config.target_branch,
-        )
+        # Use pre-computed values from SpecConfig (which already has the hash)
+        self.agent_dir = self.config.agent_dir
+        self.spec_slug = self.config.spec_slug
         self.name = self.config.name
 
         # Load auto-accept preference from file
@@ -201,13 +197,11 @@ class CodingHarnessApp(App):
     def __init__(
         self,
         spec_configs: list[SpecConfig] | None = None,
-        initial_auto_accept: bool = False,
     ):
         super().__init__()
         self.agents: dict[str, AgentSession] = {}
         self.selected_agent: str | None = None
         self._agent_counter = 0
-        self.initial_auto_accept = initial_auto_accept
         self._daemon_client = DaemonClient()
 
         # Multi-spec state management
@@ -221,6 +215,9 @@ class CodingHarnessApp(App):
         self._batch_spec_base: dict | None = None
         self._batch_file_only_mode: bool = False
         self._batch_skip_mr_creation: bool = False
+        self._batch_skip_puppeteer: bool = False
+        self._batch_skip_test_suite: bool = False
+        self._batch_skip_regression: bool = False
         self._changing_branch_agent: str | None = None
 
     def compose(self) -> ComposeResult:
@@ -348,9 +345,9 @@ class CodingHarnessApp(App):
 
             model_short = self._abbreviate_model(session.config.model)
 
-            auto_indicator = " [AUTO]" if session.auto_accept else ""
-            file_only_indicator = " [FILE]" if session.config.file_only_mode else ""
-            no_mr_indicator = " [NO-MR]" if session.config.skip_mr_creation else ""
+            auto_indicator = " AUTO" if session.auto_accept else " HITL"
+            file_only_indicator = " FILE" if session.config.file_only_mode else " GL"
+            no_mr_indicator = " NO-MR" if session.config.skip_mr_creation else " MR"
 
             hitl_indicator = ""
             checkpoint_type = get_pending_checkpoint_type(
@@ -411,43 +408,17 @@ class CodingHarnessApp(App):
         return short
 
     def _format_agent_label(self, session: AgentSession) -> str:
-        """Format agent session as a 2-line Rich markup label.
+        """Format agent session label showing only the spec name.
 
-        Line 1: {status}{hitl} {name}
-        Line 2:   {branch} {model} {iters}
+        All other details (status, branch, model, etc.) are shown in the status bar.
 
         Returns:
-            Rich markup formatted string with newline separator.
+            Agent name string (truncated if needed).
         """
-        # Line 1: Status + HITL + Name
-        status_icon = {STATUS_READY: "○", STATUS_RUNNING: "●", STATUS_STOPPED: "■"}.get(session.status, "?")
-
-        hitl_icon = ""
-        if is_checkpoint_pending(session.config.project_dir, session.spec_slug, session.config.spec_hash):
-            hitl_icon = "!"
-
-        # Truncate agent name for display (max 20 chars, show 17 + ellipsis)
         name = session.name
-        if len(name) > 20:
-            name = name[:17] + "..."
-
-        line1 = f"{status_icon}{hitl_icon} {name}"
-
-        # Line 2: Branch + Model + Iterations
-        # Truncate branch name for display (max 10 chars, show 7 + ellipsis)
-        branch = session.config.target_branch
-        if len(branch) > 10:
-            branch = branch[:7] + "..."
-
-        model_short = self._abbreviate_model(session.config.model)
-
-        iters = ""
-        if session.config.max_iterations is not None:
-            iters = f" x{session.config.max_iterations}"
-
-        line2 = f"  [dim]{branch} {model_short}{iters}[/dim]"
-
-        return f"{line1}\n{line2}"
+        if len(name) > 22:
+            name = name[:19] + "..."
+        return name
 
     def _update_agent_list(self) -> None:
         """Refresh the agent list display."""
@@ -496,16 +467,11 @@ class CodingHarnessApp(App):
         agent_id = f"agent_{self._agent_counter}"
 
         session = AgentSession(agent_id, spec_config)
-        if self.initial_auto_accept:
-            session.auto_accept = True
-            _save_auto_accept_preference(session.config.project_dir, session.spec_slug, session.config.spec_hash, True)
-
         self.agents[agent_id] = session
 
         # Register with daemon immediately for persistence
         try:
             config_dict = spec_config.to_dict()
-            config_dict["auto_accept"] = session.auto_accept
             await self._daemon_client.register_agent(agent_id, config_dict)
         except DaemonError as e:
             self.notify(f"Warning: Failed to register with daemon: {e}", severity="warning")
@@ -532,7 +498,6 @@ class CodingHarnessApp(App):
         try:
             # Use to_dict() to send complete config (including spec_slug, spec_hash, etc.)
             config_dict = config.to_dict()
-            config_dict["auto_accept"] = session.auto_accept
             agent_info = await self._daemon_client.start_agent(agent_id, config_dict)
 
             session.status = agent_info.get("status", STATUS_RUNNING)
@@ -631,14 +596,17 @@ class CodingHarnessApp(App):
             }
             self._batch_project_dir = None
             self._batch_spec = None
-            # Show file-only mode selection screen next
-            self.push_screen(FileOnlyModeScreen())
+            # Show agent options screen next
+            self.push_screen(AgentOptionsScreen())
 
     def on_file_only_mode_selected(self, event: FileOnlyModeSelected) -> None:
-        """Handle file-only mode and skip MR creation selection."""
+        """Handle file-only mode and skip flag selection."""
         if self._in_batch_mode and self._batch_spec_base:
             self._batch_file_only_mode = event.file_only_mode
             self._batch_skip_mr_creation = event.skip_mr_creation
+            self._batch_skip_puppeteer = event.skip_puppeteer
+            self._batch_skip_test_suite = event.skip_test_suite
+            self._batch_skip_regression = event.skip_regression
             self.push_screen(AdvancedOptionsScreen())
 
     def on_advanced_options_configured(self, event: AdvancedOptionsConfigured) -> None:
@@ -655,6 +623,9 @@ class CodingHarnessApp(App):
                     max_iterations=event.max_iterations,
                     file_only_mode=self._batch_file_only_mode,
                     skip_mr_creation=self._batch_skip_mr_creation,
+                    skip_puppeteer=self._batch_skip_puppeteer,
+                    skip_test_suite=self._batch_skip_test_suite,
+                    skip_regression_testing=self._batch_skip_regression,
                 )
             except ValueError as e:
                 self.notify(str(e), severity="error")
@@ -664,6 +635,9 @@ class CodingHarnessApp(App):
             self._batch_spec_base = None
             self._batch_file_only_mode = False  # Reset for next spec
             self._batch_skip_mr_creation = False  # Reset for next spec
+            self._batch_skip_puppeteer = False  # Reset for next spec
+            self._batch_skip_test_suite = False  # Reset for next spec
+            self._batch_skip_regression = False  # Reset for next spec
             self.push_screen(AddAnotherSpecDialog(len(self._batch_specs)))
 
     def on_add_another_spec_response(self, event: AddAnotherSpecResponse) -> None:
@@ -697,8 +671,6 @@ class CodingHarnessApp(App):
             try:
                 info = json.loads(workspace_info_path.read_text(encoding="utf-8"))
                 info["target_branch"] = new_target_branch
-                if "auto_accept" not in info:
-                    info["auto_accept"] = session.auto_accept
                 workspace_info_path.write_text(json.dumps(info, indent=2), encoding="utf-8")
             except (OSError, json.JSONDecodeError) as e:
                 self.log.error(f"Failed to update workspace info: {e}")
@@ -920,13 +892,11 @@ Daemon Architecture:
         if not session:
             return
 
-        if not is_checkpoint_pending(session.config.project_dir, session.config.spec_slug, session.config.spec_hash):
+        if not is_checkpoint_pending(session.config.project_dir, session.spec_slug, session.config.spec_hash):
             self.notify("No pending checkpoint to review", severity="warning")
             return
 
-        checkpoint = load_pending_checkpoint(
-            session.config.project_dir, session.config.spec_slug, session.config.spec_hash
-        )
+        checkpoint = load_pending_checkpoint(session.config.project_dir, session.spec_slug, session.config.spec_hash)
         if not checkpoint:
             self.notify("Failed to load checkpoint", severity="error")
             return
@@ -1002,6 +972,11 @@ def _save_auto_accept_preference(project_dir: Path, spec_slug: str, spec_hash: s
             agent_dir.mkdir(parents=True, exist_ok=True)
             with open(workspace_info_path, "w", encoding="utf-8") as f:
                 json.dump({"auto_accept": auto_accept}, f, indent=2)
+    else:
+        # Create file if it doesn't exist
+        agent_dir.mkdir(parents=True, exist_ok=True)
+        with open(workspace_info_path, "w", encoding="utf-8") as f:
+            json.dump({"auto_accept": auto_accept}, f, indent=2)
 
 
 def _get_current_branch(repo_path: Path) -> str:

@@ -56,7 +56,6 @@ class AgentConfig(TypedDict, total=False):
     project_dir: str
     target_branch: str
     max_iterations: int
-    auto_accept: bool
     spec_slug: str
     spec_hash: str
     file_only_mode: bool
@@ -507,6 +506,8 @@ class AgentDaemon:
         max_iterations: int | None,
         file_only_mode: bool,
         skip_mr_creation: bool,
+        spec_slug: str,
+        spec_hash: str,
     ) -> list[str]:
         """Build the command line arguments for starting an agent process.
 
@@ -517,6 +518,8 @@ class AgentDaemon:
             max_iterations: Maximum iterations limit, or None for unlimited.
             file_only_mode: Whether to run in file-only mode.
             skip_mr_creation: Whether to skip MR creation.
+            spec_slug: Spec slug identifier.
+            spec_hash: 8-character spec hash.
 
         Returns:
             List of command line arguments.
@@ -531,6 +534,10 @@ class AgentDaemon:
             project_dir,
             "--target-branch",
             target_branch,
+            "--spec-hash",
+            spec_hash,
+            "--spec-slug",
+            spec_slug,
         ]
 
         if max_iterations:
@@ -561,7 +568,6 @@ class AgentDaemon:
         project_dir = config.get("project_dir")
         target_branch = config.get("target_branch", "main")
         max_iterations = config.get("max_iterations")
-        auto_accept = config.get("auto_accept", False)
         file_only_mode = config.get("file_only_mode", False)
         skip_mr_creation = config.get("skip_mr_creation", False)
 
@@ -586,7 +592,14 @@ class AgentDaemon:
 
         # Build command
         cmd = self._build_agent_command(
-            spec_file, project_dir, target_branch, max_iterations, file_only_mode, skip_mr_creation
+            spec_file,
+            project_dir,
+            target_branch,
+            max_iterations,
+            file_only_mode,
+            skip_mr_creation,
+            spec_slug,
+            spec_hash,
         )
 
         # Set up environment
@@ -594,8 +607,6 @@ class AgentDaemon:
         # Add harness directory to PYTHONPATH so agent.cli can be found
         harness_dir = str(Path(__file__).parent.parent.parent)
         env["PYTHONPATH"] = harness_dir + os.pathsep + env.get("PYTHONPATH", "")
-        if auto_accept:
-            env["CODING_HARNESS_AUTO_ACCEPT"] = "1"
 
         # Update agent record
         agent.log_file = log_file

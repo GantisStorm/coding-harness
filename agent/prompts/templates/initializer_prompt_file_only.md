@@ -139,7 +139,7 @@ The checkpoint log file has this structure:
   ],
   "42": [
     {
-      "checkpoint_type": "issue_closure",
+      "checkpoint_type": "issue_enrichment",
       "status": "pending",
       "created_at": "2025-01-15T11:00:00Z",
       "context": { ... },
@@ -456,8 +456,8 @@ If any field is missing or empty, **STOP** and report: "ERROR: Missing required 
 
 **IMPORTANT:** The workspace_info file contains:
 - `spec_slug`: The base slug for this spec (e.g., "user-auth")
-- `spec_hash`: A unique 5-character hash for this run (e.g., "a3f9c")
-- `feature_branch`: The full branch name with hash (e.g., "feature/user-auth-a3f9c")
+- `spec_hash`: A unique 8-character base62 hash for this run (e.g., "K7xMp2Qw")
+- `feature_branch`: The full branch name with hash (e.g., "feature/user-auth-K7xMp2Qw")
 - `target_branch`: The branch to merge into (e.g., "main")
 
 **Always use the `feature_branch` value from workspace_info** - never construct branch names manually.

@@ -1,6 +1,7 @@
 {
   "include": [
     "agent",
+    "common",
     "tui"
   ],
   "exclude": [
@@ -10,7 +11,7 @@
   "venvPath": ".",
   "venv": ".venv",
   "pythonVersion": "3.14",
-  "typeCheckingMode": "basic",
+  "typeCheckingMode": "standard",
   "reportMissingImports": true,
   "reportMissingTypeStubs": false,
   "reportUnusedImport": "warning",

@@ -616,6 +616,11 @@ Milestone: [milestone_title]",
    )
    ```
    - Confirm the latest commit message starts with "chore(milestone):"
+   - Sync local working directory:
+     ```bash
+     git fetch origin
+     git reset --hard origin/feature/{{SPEC_SLUG}}
+     ```
 
 **If no merge needed (exit code 0):**
 - Proceed to Step 3.5
@@ -628,6 +633,7 @@ Milestone: [milestone_title]",
 
 This is the final quality checkpoint before the MR is created.
 
+{{#UNLESS_SKIP_TEST_SUITE}}
 ### 3.5A: Full Test Suite Execution
 
 Run the complete test suite using the command documented in the project's CLAUDE.md, README.md, or DEVGUIDE.md files.
@@ -646,6 +652,7 @@ Check for common test configuration files to identify the test framework:
 | No test suite | Proceed to 3.5B |
 
 **GUARDRAIL:** Do NOT proceed if any tests fail. Fix all issues first.
+{{/UNLESS_SKIP_TEST_SUITE}}
 
 ### 3.5B: Code Quality Verification
 
@@ -693,7 +700,14 @@ Milestone: [milestone_title]",
    )
    ```
 5. Confirm the latest commit message starts with "style(milestone):"
+6. Sync local working directory with remote:
+   ```bash
+   git fetch origin
+   git reset --hard origin/feature/{{SPEC_SLUG}}
+   ```
+   This ensures your local git state matches the remote after the MCP push.
 
+{{#UNLESS_SKIP_REGRESSION}}
 ### 3.5C: Comprehensive Feature Regression Check
 
 **Test ALL completed features in the milestone, not just 1-2.**
@@ -706,11 +720,13 @@ Milestone: [milestone_title]",
    - Perform the primary test action
    - Capture screenshot
 
+{{#UNLESS_SKIP_PUPPETEER}}
 **Browser Automation Tools (Puppeteer):**
 - `mcp__puppeteer__puppeteer_navigate` - Navigate to URL
 - `mcp__puppeteer__puppeteer_screenshot` - Capture screenshot
 - `mcp__puppeteer__puppeteer_click` - Click elements
 - `mcp__puppeteer__puppeteer_fill` - Fill form inputs
+{{/UNLESS_SKIP_PUPPETEER}}
 
 **If Puppeteer tools not available:**
 - Note in MR description: "Visual regression testing skipped - no browser automation available"
@@ -748,6 +764,7 @@ END IF
 ```
 
 **GUARDRAIL:** If ANY regression is found, stop MR creation and fix the regression first.
+{{/UNLESS_SKIP_REGRESSION}}
 
 ### 3.5D: Final Quality Checklist
 
@@ -755,9 +772,13 @@ Before proceeding to STEP 4, verify ALL of the following:
 
 | Check | Status |
 |-------|--------|
+{{#UNLESS_SKIP_TEST_SUITE}}
 | All tests pass | [ ] |
+{{/UNLESS_SKIP_TEST_SUITE}}
 | Code quality checks pass | [ ] |
+{{#UNLESS_SKIP_REGRESSION}}
 | All features verified working | [ ] |
+{{/UNLESS_SKIP_REGRESSION}}
 | All changes pushed via MCP | [ ] |
 | Push verified with `mcp__gitlab__list_commits` | [ ] |
 | No merge conflicts with target | [ ] |

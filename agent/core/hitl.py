@@ -76,70 +76,6 @@ def get_pending_checkpoint_type(project_dir: Path, spec_slug: str, spec_hash: st
     return None
 
 
-def get_latest_checkpoint_by_type(
-    project_dir: Path,
-    spec_slug: str,
-    spec_hash: str,
-    checkpoint_type: CheckpointType,
-) -> CheckpointData | None:
-    """Return the most recent checkpoint of a given type, any status.
-
-    Searches all checkpoints in the log and returns the most recent one
-    matching the specified type, regardless of its status (pending, approved,
-    rejected, etc.).
-
-    Args:
-        project_dir: Project root directory
-        spec_slug: Spec slug identifier
-        spec_hash: 5-character hex hash
-        checkpoint_type: The type of checkpoint to search for
-
-    Returns:
-        The most recent CheckpointData of the given type, or None if not found
-    """
-    log_data = _load_checkpoint_log(project_dir, spec_slug, spec_hash)
-
-    # Collect all checkpoints of the specified type
-    matching_checkpoints = _collect_checkpoints(
-        log_data,
-        lambda ckpt: ckpt.get("checkpoint_type") == checkpoint_type.value,
-    )
-
-    if not matching_checkpoints:
-        return None
-
-    # Return most recent (by created_at)
-    latest = max(matching_checkpoints, key=lambda x: x.get("created_at", ""))
-    return CheckpointData.from_dict(latest)
-
-
-def is_checkpoint_type_approved(
-    project_dir: Path,
-    spec_slug: str,
-    spec_hash: str,
-    checkpoint_type: CheckpointType,
-) -> bool:
-    """Return True if the latest checkpoint of the given type is approved.
-
-    This is a convenience function used to gate phase transitions. It checks
-    if the most recent checkpoint of the specified type has been approved.
-
-    Args:
-        project_dir: Project root directory
-        spec_slug: Spec slug identifier
-        spec_hash: 5-character hex hash
-        checkpoint_type: The type of checkpoint to check
-
-    Returns:
-        True if the latest checkpoint of the type exists and is approved,
-        False otherwise (including if no checkpoint of that type exists)
-    """
-    checkpoint = get_latest_checkpoint_by_type(project_dir, spec_slug, spec_hash, checkpoint_type)
-    if checkpoint is None:
-        return False
-    return checkpoint.status == CheckpointStatus.APPROVED
-
-
 def resolve_checkpoint(
     project_dir: Path,
     status: CheckpointStatus,
@@ -159,7 +95,7 @@ def resolve_checkpoint(
         project_dir: Project directory
         status: Resolution status
         spec_slug: Spec slug identifier (required)
-        spec_hash: 5-character hex hash (required)
+        spec_hash: 8-character base62 hash (required)
         decision: Optional decision string
         notes: Optional notes from human
         modifications: Optional modifications dict
@@ -244,7 +180,7 @@ def _get_agent_state_dir(project_dir: Path, spec_slug: str, spec_hash: str) -> P
     Args:
         project_dir: Project root directory
         spec_slug: Spec slug identifier (required)
-        spec_hash: 5-character hex hash (required)
+        spec_hash: 8-character base62 hash (required)
 
     Returns:
         Path to agent state directory in format .claude-agent/spec-slug-hash/
@@ -348,7 +284,7 @@ def _atomic_checkpoint_update(
     Args:
         project_dir: Project directory
         spec_slug: Spec slug identifier
-        spec_hash: 5-character hex hash
+        spec_hash: 8-character base62 hash
         checkpoint_id: Unique checkpoint ID to update
         update_fn: Function that modifies the checkpoint dict in-place
 

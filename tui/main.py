@@ -24,6 +24,7 @@ import argparse
 import json
 import sys
 from pathlib import Path
+from typing import NoReturn
 
 from dotenv import load_dotenv
 
@@ -49,9 +50,8 @@ def main() -> None:
 
     app = CodingHarnessApp(
         spec_configs=spec_configs,
-        initial_auto_accept=args.auto_accept,
         # Note: model and max_iterations are now per-spec in SpecConfig
-        # HITL is always enabled; use auto-accept mode ('a' key or --auto-accept flag) for faster workflows
+        # Auto-accept is managed per-agent via 'a' key toggle (saved to workspace file)
     )
     app.run()
 
@@ -61,11 +61,14 @@ def main() -> None:
 # ============================================================================
 
 
-def _exit_with_error(*messages: str) -> None:
+def _exit_with_error(*messages: str) -> NoReturn:
     """Print error messages and exit with code 1.
 
     Args:
         *messages: One or more error message strings to print.
+
+    Returns:
+        Never returns - always exits the program.
     """
     for msg in messages:
         print(msg)
@@ -91,8 +94,8 @@ Examples:
     }
   ]'
 
-  # Multiple specs with auto-accept:
-  ./start.sh --auto-accept --specs '[
+  # Multiple specs:
+  ./start.sh --specs '[
     {
       "spec_file": "/home/user/specs/feature1.txt",
       "project_dir": "/home/user/project",
@@ -133,12 +136,6 @@ Environment Variables (Optional):
         help=(
             'JSON array of spec configs: [{"spec_file": "spec1.txt", "project_dir": "/path", "target_branch": "main"}]'
         ),
-    )
-
-    parser.add_argument(
-        "--auto-accept",
-        action="store_true",
-        help="Enable auto-accept mode by default for all agents",
     )
 
     return parser.parse_args()

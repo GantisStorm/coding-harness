@@ -15,8 +15,8 @@ Example Usage:
     python -m agent.cli --spec-file app_spec.txt
     python -m agent.cli --spec-file app_spec.txt --target-branch develop --max-iterations 10
 
-Note: This CLI runner requires manual approval for all HITL checkpoints.
-      For auto-accept mode, use the TUI: ./start.sh
+Note: Auto-accept mode is controlled via .workspace_info.json in the agent directory.
+      Use the TUI (./start.sh) to toggle auto-accept with the 'a' key.
 """
 
 import argparse
@@ -27,8 +27,10 @@ import sys
 from pathlib import Path
 
 from common import validate_required_env_vars
+from common.state import FileStateRepository
 
 from .core import run_autonomous_agent
+from .core.checkpoint_handlers import CheckpointDispatcher
 from .prompts import initialize_agent_workspace
 
 
@@ -68,7 +70,16 @@ def main() -> None:
     # Initialize agent workspace before running
     try:
         agent_dir, spec_slug, spec_hash = initialize_agent_workspace(
-            project_dir, spec_file, args.target_branch, file_only_mode=args.file_only, skip_mr_creation=args.skip_mr
+            project_dir,
+            spec_file,
+            args.target_branch,
+            file_only_mode=args.file_only,
+            skip_mr_creation=args.skip_mr,
+            skip_puppeteer=args.skip_puppeteer,
+            skip_test_suite=args.skip_test_suite,
+            skip_regression_testing=args.skip_regression,
+            spec_hash=args.spec_hash,
+            spec_slug=args.spec_slug,
         )
 
         # Validate return values
@@ -83,9 +94,11 @@ def main() -> None:
         print(f"Error: Failed to initialize agent workspace: {e}", file=sys.stderr)
         sys.exit(1)
 
-    # Run the agent
-    # When run via TUI daemon, CODING_HARNESS_AUTO_ACCEPT env var controls auto-accept
-    # When run directly from CLI, defaults to manual approval (False)
+    # Create dependencies (dependency injection)
+    state_repo = FileStateRepository()
+    checkpoint_dispatcher = CheckpointDispatcher()
+
+    # Run the agent (auto_accept is read from workspace file at checkpoint time)
     try:
         asyncio.run(
             run_autonomous_agent(
@@ -95,9 +108,13 @@ def main() -> None:
                 target_branch=args.target_branch,
                 spec_slug=spec_slug,
                 spec_hash=spec_hash,
-                auto_accept=os.getenv("CODING_HARNESS_AUTO_ACCEPT", "0") == "1",
                 file_only_mode=args.file_only,
                 skip_mr_creation=args.skip_mr,
+                skip_puppeteer=args.skip_puppeteer,
+                skip_test_suite=args.skip_test_suite,
+                skip_regression_testing=args.skip_regression,
+                state_repo=state_repo,
+                checkpoint_dispatcher=checkpoint_dispatcher,
             )
         )
     except KeyboardInterrupt:
@@ -174,6 +191,38 @@ Environment Variables (Required):
         "--skip-mr",
         action="store_true",
         help="Skip MR creation after coding completes (keep changes on branch)",
+    )
+
+    parser.add_argument(
+        "--skip-puppeteer",
+        action="store_true",
+        help="Skip Puppeteer/browser automation testing",
+    )
+
+    parser.add_argument(
+        "--skip-test-suite",
+        action="store_true",
+        help="Skip test suite execution (unit/integration tests)",
+    )
+
+    parser.add_argument(
+        "--skip-regression",
+        action="store_true",
+        help="Skip feature regression spot-checks",
+    )
+
+    parser.add_argument(
+        "--spec-hash",
+        type=str,
+        default=None,
+        help="8-character spec hash (auto-generated if not provided)",
+    )
+
+    parser.add_argument(
+        "--spec-slug",
+        type=str,
+        default=None,
+        help="Spec slug identifier (auto-generated if not provided)",
     )
 
     return parser.parse_args()
